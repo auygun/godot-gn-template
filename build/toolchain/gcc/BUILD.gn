@@ -1,0 +1,58 @@
+# Generic GCC/Clang toolchain. Also used for Android, where the cc/cxx/ar
+# args point at the NDK clang (see //build/BUILDCONFIG.gn).
+toolchain("gcc") {
+  if (compile_preprocess != "") {
+    CC = "$compile_preprocess $cc"
+    CXX = "$compile_preprocess $cxx"
+  } else {
+    CC = cc
+    CXX = cxx
+  }
+  AR = ar
+
+  lib_switch = "-l"
+  lib_dir_switch = "-L"
+
+  tool("cc") {
+    depfile = "{{output}}.d"
+    depsformat = "gcc"
+    command = "$CC -MMD -MF $depfile {{defines}} {{include_dirs}} {{cflags}} {{cflags_c}} -c {{source}} -o {{output}}"
+    outputs =
+        [ "{{source_out_dir}}/{{target_output_name}}.{{source_name_part}}.o" ]
+    description = "compile {{source}}"
+  }
+
+  tool("cxx") {
+    depfile = "{{output}}.d"
+    depsformat = "gcc"
+    command = "$CXX -MMD -MF $depfile {{defines}} {{include_dirs}} {{cflags}} {{cflags_cc}} -c {{source}} -o {{output}}"
+    outputs =
+        [ "{{source_out_dir}}/{{target_output_name}}.{{source_name_part}}.o" ]
+    description = "compile {{source}}"
+  }
+
+  tool("alink") {
+    command = "rm -f {{output}} && $AR rcs {{output}} {{inputs}}"
+    outputs =
+        [ "{{target_out_dir}}/{{target_output_name}}{{output_extension}}" ]
+    default_output_extension = ".a"
+    output_prefix = "lib"
+    description = "static link {{target_output_name}}{{output_extension}}"
+  }
+
+  tool("solink") {
+    soname = "{{target_output_name}}{{output_extension}}"
+    sofile = "{{output_dir}}/$soname"
+    rspfile = soname + ".rsp"
+    rspfile_content = "{{inputs}} {{solibs}} {{libs}}"
+    command =
+        "$CXX -shared {{ldflags}} -Wl,-soname=$soname -o $sofile @$rspfile"
+    default_output_dir = "{{root_out_dir}}"
+    default_output_extension = ".so"
+    outputs = [ sofile ]
+    link_output = sofile
+    depend_output = sofile
+    output_prefix = "lib"
+    description = "link $soname"
+  }
+}

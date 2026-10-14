@@ -1,0 +1,63 @@
+# MSVC toolchain. Run gn/ninja from a Visual Studio developer prompt so
+# cl.exe, lib.exe and link.exe are on the PATH.
+toolchain("msvc") {
+  if (compile_preprocess != "") {
+    CC = "$compile_preprocess cl.exe"
+  } else {
+    CC = "cl.exe"
+  }
+
+  lib_switch = ""
+  lib_dir_switch = "/LIBPATH:"
+
+  tool("cc") {
+    pdbname = "{{target_out_dir}}/{{label_name}}_c.pdb"
+    command = "$CC /nologo /showIncludes /FC {{defines}} {{include_dirs}} {{cflags}} {{cflags_c}} /c {{source}} /Fo{{output}} /Fd\"$pdbname\""
+    depsformat = "msvc"
+    outputs =
+        [ "{{source_out_dir}}/{{target_output_name}}.{{source_name_part}}.obj" ]
+    description = "compile {{source}}"
+  }
+
+  tool("cxx") {
+    pdbname = "{{target_out_dir}}/{{label_name}}_c.pdb"
+    command = "$CC /nologo /showIncludes /FC {{defines}} {{include_dirs}} {{cflags}} {{cflags_cc}} /c {{source}} /Fo{{output}} /Fd\"$pdbname\""
+    depsformat = "msvc"
+    outputs =
+        [ "{{source_out_dir}}/{{target_output_name}}.{{source_name_part}}.obj" ]
+    description = "compile {{source}}"
+  }
+
+  tool("alink") {
+    rspfile = "{{output}}.rsp"
+    command = "lib.exe /nologo {{arflags}} /OUT:{{output}} @$rspfile"
+    outputs = [ "{{root_out_dir}}/{{target_output_name}}{{output_extension}}" ]
+    default_output_extension = ".lib"
+    default_output_dir = "{{target_out_dir}}"
+    rspfile_content = "{{inputs_newline}}"
+    description = "link {{output}}"
+  }
+
+  tool("solink") {
+    dllname = "{{output_dir}}/{{target_output_name}}{{output_extension}}"
+    libname = "${dllname}.lib"
+    pdbname = "${dllname}.pdb"
+    rspfile = "${dllname}.rsp"
+    command = "link.exe /nologo /IMPLIB:$libname /DLL /OUT:$dllname /PDB:$pdbname @$rspfile"
+    outputs = [
+      dllname,
+      libname,
+      pdbname,
+    ]
+    default_output_extension = ".dll"
+    default_output_dir = "{{root_out_dir}}"
+    link_output = libname
+    depend_output = libname
+    runtime_outputs = [
+      dllname,
+      pdbname,
+    ]
+    rspfile_content = "{{inputs_newline}} {{libs}} {{solibs}} {{ldflags}}"
+    description = "link {{output}}"
+  }
+}

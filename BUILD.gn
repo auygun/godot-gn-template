@@ -1,0 +1,110 @@
+# Android builds get the apk target unless no_apk=true (see below).
+build_apk = is_android && !no_apk
+
+# What plain `ninja` builds (ninja's default target is "default"): the
+# library and, if build_apk, the APK — but not smoke_test, which only runs
+# when named explicitly.
+group("default") {
+  deps = [ ":extension" ]
+  if (build_apk) {
+    deps += [ ":apk" ]
+  }
+}
+
+shared_library("extension") {
+  sources = [
+    "src/fps_character.cc",
+    "src/hud.cc",
+    "src/impact.cc",
+    "src/main.cc",
+    "src/register_types.cc",
+    "src/target.cc",
+    "src/touch_controls.cc",
+    "src/weapon.cc",
+  ]
+  deps = [ "//third_party/godot-cpp" ]
+
+  # Includes are relative to the project root ("src/weapon.h").
+  include_dirs = [ "//" ]
+
+  # libextension.so on linux/android, extension.dll on windows; must match
+  # gdextension/extension.gdextension.
+  output_name = "extension"
+}
+
+# Headless smoke test (build/smoke_test.py): runs the main scene for 60
+# frames, fails on any ERROR: line or non-zero exit. Desktop only; tests
+# the library extension.gdextension points at. Never writes its output, so
+# it always runs.
+if (!is_android) {
+  action("smoke_test") {
+    script = "build/smoke_test.py"
+    args = [ engine_binary ]
+    outputs = [ "$target_gen_dir/smoke_test.stamp" ]
+    deps = [ ":extension" ]
+  }
+}
+
+# Android APK export: headless export of this build's .so via the preset
+# for target_cpu (one ABI per APK). build/godot_export_apk.py verifies the
+# APK — the export can "succeed" with an empty pck — and deletes it on
+# failure so the next ninja retries.
+if (build_apk) {
+  if (is_debug) {
+    apk_export_type = "debug"
+  } else {
+    apk_export_type = "release"
+  }
+  if (target_cpu == "arm64") {
+    apk_preset = "Android"
+    apk_abi = "arm64-v8a"
+  } else if (target_cpu == "x64") {
+    apk_preset = "Android x86_64"
+    apk_abi = "x86_64"
+  } else if (target_cpu == "arm") {
+    apk_preset = "Android armeabi-v7a"
+    apk_abi = "armeabi-v7a"
+  } else if (target_cpu == "x86") {
+    apk_preset = "Android x86"
+    apk_abi = "x86"
+  } else {
+    assert(false, "no Android export preset for target_cpu " + target_cpu)
+  }
+  action("apk") {
+    script = "build/godot_export_apk.py"
+
+    # Everything the export packs (besides .godot/ data it regenerates).
+    # Add new scenes and assets here.
+    inputs = [
+      "$root_out_dir/libextension.so",
+      "export_presets.cfg",
+      "gdextension/extension.gdextension",
+      "icon.svg",
+      "icon.svg.import",
+      "project.godot",
+      "scenes/hud.tscn",
+      "scenes/impact.tscn",
+      "scenes/main.tscn",
+      "scenes/player.tscn",
+      "scenes/target.tscn",
+      "scenes/weapon.tscn",
+      "sounds/weapon_fire.wav",
+      "sounds/weapon_fire.wav.import",
+      "textures/bullet_hole_albedo.png",
+      "textures/bullet_hole_albedo.png.import",
+      "textures/bullet_hole_normal.png",
+      "textures/bullet_hole_normal.png.import",
+      "textures/bullet_hole_orm.png",
+      "textures/bullet_hole_orm.png.import",
+    ]
+    outputs = [ "$root_out_dir/app.apk" ]
+    args = [
+      engine_binary,
+      rebase_path(outputs[0], root_build_dir),
+      apk_export_type,
+      apk_preset,
+      apk_abi,
+    ]
+    deps = [ ":extension" ]
+  }
+}

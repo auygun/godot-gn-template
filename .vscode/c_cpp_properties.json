@@ -1,0 +1,9 @@
+{
+    "configurations": [
+        {
+            "name": "out/host",
+            "compileCommands": "${workspaceFolder}/out/host/compile_commands.json"
+        }
+    ],
+    "version": 4
+}

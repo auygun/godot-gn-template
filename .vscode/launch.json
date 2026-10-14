@@ -1,0 +1,46 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Godot (gdb)",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "godot",
+            "args": ["--path", "${workspaceFolder}"],
+            "cwd": "${workspaceFolder}",
+            "stopAtEntry": false,
+            "preLaunchTask": "ninja",
+            "MIMode": "gdb",
+            "setupCommands": [
+                {
+                    "description": "Enable pretty-printing for gdb",
+                    "text": "-enable-pretty-printing",
+                    "ignoreFailures": true
+                }
+            ]
+        },
+        {
+            "name": "Godot (MSVC)",
+            "type": "cppvsdbg",
+            "request": "launch",
+            "program": "godot",
+            "args": ["--path", "${workspaceFolder}"],
+            "cwd": "${workspaceFolder}",
+            "stopAtEntry": false,
+            "preLaunchTask": "ninja",
+            "console": "integratedTerminal"
+        },
+        {
+            "name": "Android (lldb)",
+            "type": "lldb",
+            "request": "launch",
+            "preLaunchTask": "android debug start",
+            "targetCreateCommands": [],
+            "processCreateCommands": [
+                "command source ${workspaceFolder}/out/android/debug/lldb_attach.txt",
+                "process continue"
+            ],
+            "sourceLanguages": ["cpp"]
+        }
+    ]
+}

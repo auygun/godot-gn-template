@@ -1,0 +1,187 @@
+[gd_scene load_steps=21 format=3]
+
+[ext_resource type="AudioStream" uid="uid://cyu1l2hh67elk" path="res://sounds/weapon_fire.wav" id="1_fire"]
+[ext_resource type="PackedScene" path="res://scenes/impact.tscn" id="2_impact"]
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_1"]
+albedo_color = Color(0.15, 0.15, 0.18, 1)
+
+[sub_resource type="BoxMesh" id="BoxMesh_1"]
+material = SubResource("StandardMaterial3D_1")
+size = Vector3(0.08, 0.12, 0.5)
+
+[sub_resource type="Gradient" id="Gradient_flash"]
+offsets = PackedFloat32Array(0, 0.2, 0.55, 1)
+colors = PackedColorArray(1, 1, 0.9, 1, 1, 0.85, 0.45, 0.9, 1, 0.45, 0.1, 0.35, 1, 0.3, 0, 0)
+
+[sub_resource type="GradientTexture2D" id="GradientTexture2D_flash"]
+gradient = SubResource("Gradient_flash")
+fill = 1
+fill_from = Vector2(0.5, 0.5)
+fill_to = Vector2(1, 0.5)
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_flash"]
+transparency = 1
+blend_mode = 1
+cull_mode = 2
+shading_mode = 0
+albedo_texture = SubResource("GradientTexture2D_flash")
+
+[sub_resource type="QuadMesh" id="QuadMesh_core"]
+material = SubResource("StandardMaterial3D_flash")
+size = Vector2(0.22, 0.22)
+
+[sub_resource type="QuadMesh" id="QuadMesh_spike"]
+material = SubResource("StandardMaterial3D_flash")
+size = Vector2(0.05, 0.38)
+
+[sub_resource type="QuadMesh" id="QuadMesh_tongue"]
+material = SubResource("StandardMaterial3D_flash")
+size = Vector2(0.12, 0.45)
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_spark"]
+transparency = 1
+blend_mode = 1
+shading_mode = 0
+vertex_color_use_as_albedo = true
+
+[sub_resource type="BoxMesh" id="BoxMesh_spark"]
+material = SubResource("StandardMaterial3D_spark")
+size = Vector3(0.008, 0.07, 0.008)
+
+[sub_resource type="Gradient" id="Gradient_spark"]
+colors = PackedColorArray(1, 0.9, 0.6, 1, 1, 0.35, 0, 0)
+
+[sub_resource type="Gradient" id="Gradient_puff"]
+offsets = PackedFloat32Array(0, 0.4, 1)
+colors = PackedColorArray(1, 1, 1, 1, 1, 1, 1, 0.45, 1, 1, 1, 0)
+
+[sub_resource type="GradientTexture2D" id="GradientTexture2D_puff"]
+gradient = SubResource("Gradient_puff")
+width = 64
+height = 64
+fill = 1
+fill_from = Vector2(0.5, 0.5)
+fill_to = Vector2(1, 0.5)
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_smoke"]
+transparency = 1
+shading_mode = 0
+vertex_color_use_as_albedo = true
+albedo_texture = SubResource("GradientTexture2D_puff")
+billboard_mode = 3
+billboard_keep_scale = true
+
+[sub_resource type="QuadMesh" id="QuadMesh_smoke"]
+material = SubResource("StandardMaterial3D_smoke")
+size = Vector2(0.12, 0.12)
+
+[sub_resource type="Curve" id="Curve_smoke_scale"]
+_data = [Vector2(0, 0.3), 0.0, 2.0, 0, 0, Vector2(1, 1), 0.0, 0.0, 0, 0]
+point_count = 2
+
+[sub_resource type="Gradient" id="Gradient_smoke"]
+offsets = PackedFloat32Array(0, 0.15, 1)
+colors = PackedColorArray(0.75, 0.75, 0.75, 0, 0.7, 0.7, 0.7, 0.3, 0.6, 0.6, 0.6, 0)
+
+[sub_resource type="AudioStreamRandomizer" id="AudioStreamRandomizer_fire"]
+streams_count = 1
+stream_0/stream = ExtResource("1_fire")
+random_pitch = 1.08
+random_volume_offset_db = 1.5
+
+[node name="Weapon" type="Weapon"]
+impact_scene = ExtResource("2_impact")
+
+[node name="Mesh" type="MeshInstance3D" parent="."]
+mesh = SubResource("BoxMesh_1")
+
+[node name="Muzzle" type="Marker3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -0.3)
+
+[node name="Flash" type="Node3D" parent="Muzzle"]
+visible = false
+
+[node name="Core" type="MeshInstance3D" parent="Muzzle/Flash"]
+cast_shadow = 0
+mesh = SubResource("QuadMesh_core")
+
+[node name="Spike1" type="MeshInstance3D" parent="Muzzle/Flash"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -0.01)
+cast_shadow = 0
+mesh = SubResource("QuadMesh_spike")
+
+[node name="Spike2" type="MeshInstance3D" parent="Muzzle/Flash"]
+transform = Transform3D(0.5, -0.866, 0, 0.866, 0.5, 0, 0, 0, 1, 0, 0, -0.01)
+cast_shadow = 0
+mesh = SubResource("QuadMesh_spike")
+
+[node name="Spike3" type="MeshInstance3D" parent="Muzzle/Flash"]
+transform = Transform3D(-0.5, -0.866, 0, 0.866, -0.5, 0, 0, 0, 1, 0, 0, -0.01)
+cast_shadow = 0
+mesh = SubResource("QuadMesh_spike")
+
+[node name="TongueV" type="MeshInstance3D" parent="Muzzle/Flash"]
+transform = Transform3D(0, 0, 1, 1, 0, 0, 0, 1, 0, 0, 0, -0.2)
+cast_shadow = 0
+mesh = SubResource("QuadMesh_tongue")
+
+[node name="TongueH" type="MeshInstance3D" parent="Muzzle/Flash"]
+transform = Transform3D(1, 0, 0, 0, 0, -1, 0, 1, 0, 0, 0, -0.2)
+cast_shadow = 0
+mesh = SubResource("QuadMesh_tongue")
+
+[node name="Light" type="OmniLight3D" parent="Muzzle/Flash"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -0.1)
+light_color = Color(1, 0.65, 0.3, 1)
+light_energy = 3.0
+omni_range = 5.0
+
+[node name="Sparks" type="CPUParticles3D" parent="Muzzle"]
+emitting = false
+amount = 10
+lifetime = 0.12
+one_shot = true
+explosiveness = 1.0
+lifetime_randomness = 0.4
+local_coords = false
+mesh = SubResource("BoxMesh_spark")
+particle_flag_align_y = true
+direction = Vector3(0, 0, -1)
+spread = 22.0
+gravity = Vector3(0, -9.8, 0)
+initial_velocity_min = 5.0
+initial_velocity_max = 10.0
+scale_amount_min = 0.6
+scale_amount_max = 1.2
+color_ramp = SubResource("Gradient_spark")
+
+[node name="Smoke" type="CPUParticles3D" parent="Muzzle"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -0.05)
+emitting = false
+amount = 32
+lifetime = 1.4
+lifetime_randomness = 0.3
+local_coords = false
+draw_order = 2
+mesh = SubResource("QuadMesh_smoke")
+direction = Vector3(0, 0, -1)
+spread = 25.0
+gravity = Vector3(0, 0.35, 0)
+initial_velocity_min = 0.4
+initial_velocity_max = 1.0
+angular_velocity_min = -40.0
+angular_velocity_max = 40.0
+damping_min = 0.8
+damping_max = 1.2
+angle_min = -180.0
+angle_max = 180.0
+scale_amount_min = 1.0
+scale_amount_max = 1.6
+scale_amount_curve = SubResource("Curve_smoke_scale")
+color_ramp = SubResource("Gradient_smoke")
+
+[node name="FireSound" type="AudioStreamPlayer3D" parent="Muzzle"]
+stream = SubResource("AudioStreamRandomizer_fire")
+volume_db = -4.0
+max_polyphony = 4

@@ -1,0 +1,5 @@
+# Marker file (content ignored by Godot): keeps the editor's filesystem
+# scan — and the exporter — away from GN/Ninja build artifacts in out/
+# (extension_api.json dumps, libgodot-cpp.a, .so files, obj/). Without it
+# the Android export would pack ~400 MB of build junk into the pck.
+# Tracked in git via .gitignore's `out/*` + `!out/.gdignore`.

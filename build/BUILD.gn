@@ -1,0 +1,198 @@
+# Common flags, applied via set_defaults in BUILDCONFIG.gn. The defines
+# mirror godot-cpp's cmake files; GN defines don't propagate through deps.
+config("default") {
+  defines = [
+    "DISABLE_DEPRECATED",
+    "GDEXTENSION",
+    "THREADS_ENABLED",
+  ]
+
+  if (is_android) {
+    defines += [
+      "ANDROID_ENABLED",
+      "UNIX_ENABLED",
+    ]
+  } else if (is_linux) {
+    defines += [
+      "LINUX_ENABLED",
+      "UNIX_ENABLED",
+    ]
+  } else if (is_win) {
+    defines += [
+      "NOMINMAX",
+      "TYPED_METHOD_BIND",
+      "WINDOWS_ENABLED",
+
+      # Godot (and godot-cpp) are built without C++ exceptions on MSVC.
+      "_HAS_EXCEPTIONS=0",
+    ]
+  }
+
+  cflags = []
+  cflags_cc = []
+
+  if (is_win) {
+    cflags += [
+      "/permissive-",  # Don't enable nonconforming code to compile.
+      "/EHsc",  # Use C++ exception handling (off via _HAS_EXCEPTIONS=0).
+      "/Gd",  # __cdecl calling convention.
+      "/utf-8",  # Set Source and Executable character set.
+      "/Zc:__cplusplus",  # Report the actual C++ standard in __cplusplus.
+    ]
+    cflags_cc += [ "/std:c++20" ]
+  } else {
+    # Export only the entry point (GDE_EXPORT), like godot-cpp's own builds;
+    # otherwise every statically linked godot-cpp symbol is exported.
+    cflags += [ "-fvisibility=hidden" ]
+    cflags_cc += [
+      "-fno-exceptions",  # Godot doesn't use exceptions.
+      "-fvisibility-inlines-hidden",
+      "-std=c++20",
+    ]
+  }
+
+  if (is_linux) {
+    cflags += [
+      "-fPIC",  # Emit position-independent code suitable for dynamic linking.
+    ]
+    libs = [
+      "pthread",  # Use the POSIX thread library.
+    ]
+    if (!is_debug) {
+      # Self-contained libstdc++ (godot-cpp's linux default); --exclude-libs
+      # keeps the archives' symbols out of the dynamic symbol table. Debug
+      # builds link dynamically so the library can unload for hot reload.
+      ldflags = [
+        "-static-libgcc",
+        "-static-libstdc++",
+        "-Wl,--exclude-libs,ALL",
+      ]
+    }
+  } else if (is_android) {
+    cflags += [
+      "--sysroot=$ndk/toolchains/llvm/prebuilt/$ndk_host/sysroot",
+      "-fPIC",  # Emit position-independent code suitable for dynamic linking.
+    ]
+
+    # Self-contained libstdc++, like Godot's own android builds (symbols
+    # kept unexported, as on linux).
+    ldflags = [
+      "-static-libstdc++",
+      "-Wl,--exclude-libs,ALL",
+    ]
+  }
+}
+
+config("debug") {
+  defines = [ "DEBUG_ENABLED" ]
+
+  # Desktop debug builds support hot reload: the editor reloads the rebuilt
+  # library when its window regains focus. HOT_RELOAD_ENABLED lets godot-cpp
+  # recreate instances of non-runtime (tool) classes.
+  if (!is_android) {
+    defines += [ "HOT_RELOAD_ENABLED" ]
+  }
+
+  if (is_win) {
+    cflags = [
+      "/Od",  # Disable optimizations.
+      "/Z7",  # Full debug info in the obj files.
+      "/RTC1",  # Enable fast run-time checks.
+      "/MDd",  # Link with multithread debug DLL run-time libraries.
+    ]
+    ldflags = [ "/DEBUG:FASTLINK" ]  # Use the debug info in the obj files.
+  } else {
+    cflags = [
+      "-g",  # Debug symbols.
+      "-O0",  # No optimizations (godot-cpp dev build parity).
+      "-fno-omit-frame-pointer",  # Keep frame pointers for stack traces.
+    ]
+    if (is_linux && !is_clang) {
+      # GCC marks some symbols STB_GNU_UNIQUE, which makes dlclose() a no-op
+      # and so the hot-reloaded library would never really unload.
+      cflags_cc = [ "-fno-gnu-unique" ]
+    }
+  }
+}
+
+config("release") {
+  defines = [ "NDEBUG" ]
+
+  if (is_win) {
+    cflags = [
+      "/GL",  # Link-time code generation / whole program optimization.
+      "/Gy",  # Allows converting inline functions to separate functions.
+      "/O2",  # Optimize for maximum speed.
+      "/Oi",  # Enable intrinsics.
+      "/fp:fast",  # Floating points are fast.
+      "/MD",  # Link with multithread release DLL run-time libraries.
+    ]
+    ldflags = [
+      "/LTCG",  # Link time code generation.
+      "/OPT:ICF",  # COMDAT (common data) folding.
+      "/OPT:REF",  # Eliminate unreferenced code and data.
+    ]
+  } else {
+    # No -ffast-math: the Godot engine build doesn't use it, and godot-cpp
+    # headers use infinity() constants that become UB under fast math.
+    cflags = [
+      "-O3",  # Full optimization.
+
+      # Place data and functions in their own sections so the linker can
+      # drop the unused ones.
+      "-fdata-sections",
+      "-ffunction-sections",
+    ]
+    ldflags = [
+      "-Wl,--gc-sections",
+      "-s",  # Strip symbols (godot-cpp's release default).
+    ]
+  }
+}
+
+config("warnings") {
+  if (is_win) {
+    # Mirrors the godot-cpp MSVC warning set
+    # (cmake/common_compiler_flags.cmake).
+    cflags = [
+      "/W4",  # Warning level 4 (informational) warnings that aren't off by
+              # default.
+
+      # Disable warnings which we don't plan to fix.
+      "/wd4100",  # unreferenced formal parameter.
+      "/wd4127",  # conditional expression is constant.
+      "/wd4201",  # non-standard nameless struct/union.
+      "/wd4244",  # narrowing conversion.
+      "/wd4245",  # narrowing conversion.
+      "/wd4267",  # narrowing conversion.
+      "/wd4305",  # truncation: double to float.
+      "/wd4514",  # unreferenced inline function has been removed.
+      "/wd4714",  # function marked as __forceinline not inlined.
+      "/wd4820",  # padding added after construct.
+    ]
+  } else {
+    cflags = [
+      # Enable as much warnings as possible.
+      "-Wall",  # Enable (almost) all warnings.
+      "-Wextra",  # Enable even more warnings.
+
+      # Forbidden extensions.
+      "-Wvla",  # Warn if variable-length array is used in code.
+
+      # Disable the following warnings:
+      "-Wno-unused-parameter",
+      "-Wno-sign-compare",
+
+      # Triggered by godot-cpp headers (binder_common.hpp) in the game code.
+      "-Wno-unused-but-set-parameter",
+    ]
+  }
+
+  if (treat_warnings_as_errors) {
+    if (is_win) {
+      cflags += [ "/WX" ]
+    } else {
+      cflags += [ "-Werror" ]
+    }
+  }
+}

@@ -1,0 +1,78 @@
+# godot-cpp (vendored as the godot-cpp/ submodule) built against the local
+# engine's extension API dump. The generated bindings land in
+# $root_gen_dir/godot_cpp/gen/...
+godot_cpp_gen = "$root_gen_dir/godot_cpp"
+
+# The engine's extension API dump lives in the gen dir and is created at GN
+# time (by godot_cpp.py) if it is missing. Engine updates aren't tracked:
+# after one, delete the out dir and rebuild.
+extension_api_file = godot_cpp_gen + "/extension_api.json"
+
+config("godot_cpp_includes") {
+  include_dirs = [
+    "godot-cpp/include",
+    godot_cpp_gen + "/gen/include",
+  ]
+}
+
+# The binding generator's Python modules (binding_generator.py imports
+# make_interface_header.py). A change to any of them regenerates the
+# bindings, and the file list below.
+generator_scripts = [
+  "godot-cpp/binding_generator.py",
+  "godot-cpp/make_interface_header.py",
+]
+
+# The generated file list depends on the generator, so `gn gen` re-runs
+# (via the file_dependencies) when it changes. Running the script also
+# creates the API dump if it is missing.
+generated_files = exec_script("godot_cpp.py",
+                              [
+                                "list",
+                                extension_api_file,
+                                godot_cpp_gen,
+                                engine_binary,
+                              ],
+                              "list lines",
+                              generator_scripts)
+generated_cpp = filter_include(generated_files, [ "*.cpp" ])
+godot_cpp_sources = exec_script("godot_cpp.py", [ "sources" ], "list lines")
+
+action("generate_godot_cpp_bindings") {
+  script = "godot_cpp.py"
+  args = [
+    "generate",
+    extension_api_file,
+    "//third_party/godot-cpp/godot-cpp/gdextension/gdextension_interface.json",
+    godot_cpp_gen,
+    engine_binary,
+  ]
+  inputs =
+      generator_scripts + [ "godot-cpp/gdextension/gdextension_interface.json" ]
+
+  # godot_cpp.py only rewrites files whose content changed, and GN actions
+  # restat their outputs, so a regeneration that changes little recompiles
+  # little.
+  outputs = generated_files
+}
+
+# godot-cpp static lib. Common flags/defines come from the set_defaults in
+# //build/BUILDCONFIG.gn (mirrors the godot-cpp template_debug build).
+static_library("godot-cpp") {
+  sources = godot_cpp_sources + generated_cpp
+  deps = [ ":generate_godot_cpp_bindings" ]
+
+  # Propagate the include dirs to dependents (the game library) too.
+  public_configs = [ ":godot_cpp_includes" ]
+
+  # godot-cpp is third-party code; don't build it with -Werror.
+  configs -= [ "//build:warnings" ]
+
+  # Exceptions disabled via //build:default (_HAS_EXCEPTIONS=0 on MSVC,
+  # -fno-exceptions elsewhere).
+  if (!is_win) {
+    cflags_cc = [
+      "-fno-omit-frame-pointer",  # Keep frame pointers for stack traces.
+    ]
+  }
+}

@@ -1,0 +1,41 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "ninja",
+            "type": "shell",
+            "command": "ninja",
+            "args": ["-C", "out/host"],
+            "options": { "cwd": "${workspaceFolder}" },
+            "group": { "kind": "build", "isDefault": true },
+            "problemMatcher": ["$gcc", "$msCompile"]
+        },
+        {
+            "label": "ninja android debug",
+            "type": "shell",
+            "command": "ninja",
+            "args": ["-C", "out/android/debug"],
+            "options": { "cwd": "${workspaceFolder}" },
+            "group": "build",
+            "problemMatcher": ["$gcc"]
+        },
+        {
+            "label": "android debug start",
+            "type": "shell",
+            "command": "python3",
+            "args": ["build/android_debug.py", "out/android/debug"],
+            "options": { "cwd": "${workspaceFolder}" },
+            "dependsOn": "ninja android debug",
+            "isBackground": true,
+            "problemMatcher": {
+                "owner": "android_debug",
+                "pattern": { "regexp": "^android_debug: FAILED — (.*)$", "message": 1 },
+                "background": {
+                    "activeBegins": true,
+                    "beginsPattern": "^android_debug: installing",
+                    "endsPattern": "^android_debug: (ready|FAILED)"
+                }
+            }
+        }
+    ]
+}

@@ -1,0 +1,9 @@
+# Godot
+.godot/
+
+# C++ build
+out/*
+!out/.gdignore
+
+# Python (build/*.py scripts)
+__pycache__/

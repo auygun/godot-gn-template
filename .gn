@@ -1,0 +1,9 @@
+buildconfig = "//build/BUILDCONFIG.gn"
+script_executable = "python3"
+
+# gn gen writes compile_commands.json for these targets (game library and
+# godot-cpp) for IntelliSense/clangd — .vscode/ points at out/host's.
+export_compile_commands = [
+  "//:extension",
+  "//third_party/godot-cpp:godot-cpp",
+]

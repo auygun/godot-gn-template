@@ -1,0 +1,78 @@
+# Linux build + headless smoke test.
+#
+# Downloads the official Godot release named by GODOT_VERSION (bump it when
+# you move to a newer release); nothing is built from source.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GODOT_VERSION: 4.7.2-stable
+
+jobs:
+  linux:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      - name: Install build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build ccache
+          # GN isn't packaged for Ubuntu; use Chromium's prebuilt.
+          curl -fsSL -o gn.zip \
+            "https://chrome-infra-packages.appspot.com/dl/gn/gn/linux-amd64/+/latest"
+          unzip -q gn.zip -d "$HOME/gn" && rm gn.zip
+          echo "$HOME/gn" >> "$GITHUB_PATH"
+
+      - name: Download Godot ${{ env.GODOT_VERSION }}
+        run: |
+          name="Godot_v${GODOT_VERSION}_linux.x86_64"
+          curl -fsSL -o godot.zip \
+            "https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}/${name}.zip"
+          unzip -q godot.zip -d "$HOME/godot" && rm godot.zip
+          # On PATH as "godot", the engine_binary default.
+          ln -s "$HOME/godot/$name" "$HOME/godot/godot"
+          echo "$HOME/godot" >> "$GITHUB_PATH"
+
+      # Each run starts on a fresh machine; restore/save are separate steps
+      # so the cache is saved even when a later step fails.
+      - name: Restore ccache
+        uses: actions/cache/restore@v6
+        with:
+          path: ~/.cache/ccache
+          key: ccache-${{ env.GODOT_VERSION }}-${{ github.sha }}
+          restore-keys: ccache-${{ env.GODOT_VERSION }}-
+
+      # Writes .godot/extension_list.cfg; without it the C++ classes don't load.
+      - name: Import
+        run: godot --headless --recovery-mode --path . --import
+
+      - name: Build (linux release)
+        run: |
+          export CCACHE_DIR="$HOME/.cache/ccache"
+          gn gen out/host
+          ninja -C out/host
+          ccache -s
+
+      - name: Save ccache
+        if: always()
+        uses: actions/cache/save@v6
+        with:
+          path: ~/.cache/ccache
+          key: ccache-${{ env.GODOT_VERSION }}-${{ github.sha }}
+
+      - name: Smoke test
+        run: ninja -C out/host smoke_test

@@ -1,0 +1,22 @@
+[configuration]
+
+entry_symbol = "extension_init"
+compatibility_minimum = 4.7
+; The editor reloads a rebuilt library. Only the editor; exported games ignore this.
+reloadable = true
+
+[libraries]
+
+linux.x86_64 = "res://out/host/libextension.so"
+windows.x86_64 = "res://out/host/extension.dll"
+; All ABIs share out/android/<config>; the export preset (chosen by
+; target_cpu) enables one ABI per APK, and debug/release exports pick the
+; matching .debug/.release entry.
+android.arm64.debug   = "res://out/android/debug/libextension.so"
+android.arm64.release = "res://out/android/release/libextension.so"
+android.x86_64.debug   = "res://out/android/debug/libextension.so"
+android.x86_64.release = "res://out/android/release/libextension.so"
+android.arm32.debug   = "res://out/android/debug/libextension.so"
+android.arm32.release = "res://out/android/release/libextension.so"
+android.x86_32.debug   = "res://out/android/debug/libextension.so"
+android.x86_32.release = "res://out/android/release/libextension.so"

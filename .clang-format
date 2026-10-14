@@ -1,0 +1,5 @@
+# Chromium C++ style for the game code (src/). The godot-cpp submodule has
+# its own .clang-format.
+BasedOnStyle: Chromium
+# Keep in sync with -std / /std: in build/BUILD.gn.
+Standard: c++20

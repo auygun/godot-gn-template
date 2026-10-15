@@ -168,7 +168,7 @@ Dictionary Weapon::CastRay(const Transform3D& aim) {
   Vector3 to = aim.xform(Vector3(0.0f, 0.0f, -kRange));
 
   Ref<PhysicsRayQueryParameters3D> query =
-      PhysicsRayQueryParameters3D::create(from, to);
+      PhysicsRayQueryParameters3D::create(from, to, kShotMask);
   query->set_collide_with_areas(true);
 
   // Don't hit the player the weapon is attached to.

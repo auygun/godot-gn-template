@@ -51,6 +51,9 @@ class Weapon : public Node3D {
  private:
   // Length of the hitscan ray, in meters.
   static constexpr float kRange = 100.0f;
+  // Physics layers shots hit (named in project.godot): world (1) and
+  // shot_only (3), not player_clip (2).
+  static constexpr uint32_t kShotMask = (1u << 0) | (1u << 2);
   // The barrel aims at the crosshair's hit point, but never closer than
   // this (pressed against a wall it would turn sideways), in meters.
   static constexpr float kMinAimDistance = 2.0f;

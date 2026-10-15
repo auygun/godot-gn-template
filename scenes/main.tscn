@@ -1,8 +1,9 @@
-[gd_scene load_steps=16 format=3]
+[gd_scene load_steps=8 format=3]
 
 [ext_resource type="PackedScene" path="res://scenes/player.tscn" id="1_player"]
 [ext_resource type="PackedScene" path="res://scenes/target.tscn" id="2_target"]
 [ext_resource type="PackedScene" path="res://scenes/hud.tscn" id="3_hud"]
+[ext_resource type="PackedScene" path="res://scenes/levels/test_level.tscn" id="4_level"]
 
 [sub_resource type="ProceduralSkyMaterial" id="ProceduralSkyMaterial_1"]
 sky_top_color = Color(0.35, 0.55, 0.85, 1)
@@ -19,34 +20,6 @@ sky = SubResource("Sky_1")
 ambient_light_source = 3
 tonemap_mode = 2
 
-[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_1"]
-albedo_color = Color(0.45, 0.48, 0.42, 1)
-
-[sub_resource type="PlaneMesh" id="PlaneMesh_1"]
-material = SubResource("StandardMaterial3D_1")
-size = Vector2(60, 60)
-
-[sub_resource type="BoxShape3D" id="BoxShape3D_1"]
-size = Vector3(60, 1, 60)
-
-[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_wall"]
-albedo_color = Color(0.62, 0.6, 0.56, 1)
-
-[sub_resource type="BoxMesh" id="BoxMesh_wall"]
-material = SubResource("StandardMaterial3D_wall")
-size = Vector3(20, 3, 0.4)
-
-[sub_resource type="BoxShape3D" id="BoxShape3D_wall"]
-size = Vector3(20, 3, 0.4)
-
-[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_crate"]
-albedo_color = Color(0.55, 0.4, 0.25, 1)
-
-[sub_resource type="BoxMesh" id="BoxMesh_crate"]
-material = SubResource("StandardMaterial3D_crate")
-
-[sub_resource type="BoxShape3D" id="BoxShape3D_crate"]
-
 [node name="Main" type="Main"]
 
 [node name="WorldEnvironment" type="WorldEnvironment" parent="."]
@@ -57,63 +30,7 @@ transform = Transform3D(0.8192, -0.4394, 0.3687, 0, 0.6428, 0.766, -0.5736, -0.6
 light_energy = 1.2
 shadow_enabled = true
 
-[node name="Floor" type="StaticBody3D" parent="."]
-
-[node name="Mesh" type="MeshInstance3D" parent="Floor"]
-mesh = SubResource("PlaneMesh_1")
-
-[node name="CollisionShape3D" type="CollisionShape3D" parent="Floor"]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.5, 0)
-shape = SubResource("BoxShape3D_1")
-
-[node name="Walls" type="Node3D" parent="."]
-
-[node name="Back" type="StaticBody3D" parent="Walls"]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.5, -16)
-
-[node name="Mesh" type="MeshInstance3D" parent="Walls/Back"]
-mesh = SubResource("BoxMesh_wall")
-
-[node name="CollisionShape3D" type="CollisionShape3D" parent="Walls/Back"]
-shape = SubResource("BoxShape3D_wall")
-
-[node name="Left" type="StaticBody3D" parent="Walls"]
-transform = Transform3D(0, 0, 1, 0, 1, 0, -1, 0, 0, -10, 1.5, -6)
-
-[node name="Mesh" type="MeshInstance3D" parent="Walls/Left"]
-mesh = SubResource("BoxMesh_wall")
-
-[node name="CollisionShape3D" type="CollisionShape3D" parent="Walls/Left"]
-shape = SubResource("BoxShape3D_wall")
-
-[node name="Crates" type="Node3D" parent="."]
-
-[node name="Crate1" type="StaticBody3D" parent="Crates"]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -5, 0.5, -5)
-
-[node name="Mesh" type="MeshInstance3D" parent="Crates/Crate1"]
-mesh = SubResource("BoxMesh_crate")
-
-[node name="CollisionShape3D" type="CollisionShape3D" parent="Crates/Crate1"]
-shape = SubResource("BoxShape3D_crate")
-
-[node name="Crate2" type="StaticBody3D" parent="Crates"]
-transform = Transform3D(0.866, 0, -0.5, 0, 1, 0, 0.5, 0, 0.866, 5.5, 0.5, -5)
-
-[node name="Mesh" type="MeshInstance3D" parent="Crates/Crate2"]
-mesh = SubResource("BoxMesh_crate")
-
-[node name="CollisionShape3D" type="CollisionShape3D" parent="Crates/Crate2"]
-shape = SubResource("BoxShape3D_crate")
-
-[node name="Crate3" type="StaticBody3D" parent="Crates"]
-transform = Transform3D(0.966, 0, 0.259, 0, 1, 0, -0.259, 0, 0.966, 5.3, 1.5, -5.1)
-
-[node name="Mesh" type="MeshInstance3D" parent="Crates/Crate3"]
-mesh = SubResource("BoxMesh_crate")
-
-[node name="CollisionShape3D" type="CollisionShape3D" parent="Crates/Crate3"]
-shape = SubResource("BoxShape3D_crate")
+[node name="Level" parent="." instance=ExtResource("4_level")]
 
 [node name="Player" parent="." instance=ExtResource("1_player")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 5)
@@ -121,12 +38,12 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 5)
 [node name="Targets" type="Node3D" parent="."]
 
 [node name="Target1" parent="Targets" instance=ExtResource("2_target")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -3, 0, -8)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -7, 0, -21)
 
 [node name="Target2" parent="Targets" instance=ExtResource("2_target")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -12)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 4, 0, -30)
 
 [node name="Target3" parent="Targets" instance=ExtResource("2_target")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 3, 0, -8)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 9, 2, -36)
 
 [node name="Hud" parent="." instance=ExtResource("3_hud")]

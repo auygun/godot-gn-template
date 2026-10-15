@@ -84,6 +84,7 @@ if (build_apk) {
       "project.godot",
       "scenes/hud.tscn",
       "scenes/impact.tscn",
+      "scenes/levels/test_level.tscn",
       "scenes/main.tscn",
       "scenes/player.tscn",
       "scenes/target.tscn",

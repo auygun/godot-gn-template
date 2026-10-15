@@ -1,10 +1,14 @@
 #ifndef SRC_FPS_CHARACTER_H_
 #define SRC_FPS_CHARACTER_H_
 
+#include <cstdint>
+
 #include <godot_cpp/classes/character_body3d.hpp>
 #include <godot_cpp/classes/input_event.hpp>
 #include <godot_cpp/core/binder_common.hpp>
 #include <godot_cpp/core/gdvirtual.gen.inc>
+
+#include "src/player_input.h"
 
 namespace godot {
 
@@ -23,11 +27,26 @@ class FpsCharacter : public CharacterBody3D {
   void _process(double delta) override;
   void _unhandled_input(const Ref<InputEvent>& event) override;
 
+  // Advance the game state by one physics tick under the given command:
+  // look, movement, recoil and the weapon. Reads nothing else from the
+  // player, so a server can run the commands a client sends.
+  void Simulate(const PlayerInput& command, float dt);
+  // The command from the local devices for this tick.
+  PlayerInput GatherInput();
+  // Where shots come from: the eye, looking along the simulated aim plus
+  // recoil. Game state only (no bob or interpolation), so a server without
+  // a camera gets the same.
+  Transform3D AimTransform() const;
+
   // Back to the spawn transform with full ammo and a still camera.
   void Respawn();
-  // Apply a look delta in pixels (mouse or touch). The camera turns on the
-  // next frame, the body on the next tick.
+  // Apply a look delta in pixels (mouse or touch) to the local look. The
+  // camera turns on the next frame; the next command carries it to the
+  // simulation.
   void ApplyLookDelta(const Vector2& delta, float sensitivity);
+  // Leave fire out of the commands until "shoot" is released (e.g. the
+  // click that recaptured the mouse).
+  void HoldFire();
 
   // View motion state, for the weapon's bob and sway. The step phase
   // advances one cycle per two steps; the bob amount is 0 when standing or
@@ -57,8 +76,11 @@ class FpsCharacter : public CharacterBody3D {
   static constexpr float kPitchLimit = 1.55f;  // ~89 degrees
   // Below this height the player has fallen off the map and respawns.
   static constexpr float kFallLimit = -20.0f;
-  // Each shot kicks the view up (and randomly sideways); exponential decay
-  // gives sustained fire a steady offset.
+  // Eye height when the scene has no Camera3D to take it from (a server).
+  static constexpr float kEyeHeight = 1.6f;  // meters
+  // Each shot kicks the aim up (and pseudo-randomly sideways, the same on
+  // every machine); exponential decay gives sustained fire a steady
+  // offset.
   static constexpr float kRecoilKick = 0.03f;      // radians per shot
   static constexpr float kRecoilYawKick = 0.008f;  // max radians per shot
   static constexpr float kRecoilReturn = 6.0f;     // decay rate, 1/s
@@ -88,25 +110,38 @@ class FpsCharacter : public CharacterBody3D {
   void UpdateLandingDip(float dt, float landing_speed);
   // Every frame, so it is smooth at any refresh rate: advance the bob.
   void UpdateBob(float dt);
-  // Place the (top-level) camera at the body's eye, looking along yaw_,
-  // pitch_ and the recoil (decayed by since_tick seconds past the last
+  // Place the (top-level) camera at the body's eye, looking along the
+  // local look and the recoil (decayed by since_tick seconds past the last
   // tick), moved by the bob and landing_dip.
   void UpdateCamera(const Vector3& origin, float landing_dip, float since_tick);
   void OnWeaponFired();
 
   Camera3D* camera_ = nullptr;
-  // The camera's position relative to the body, from the scene.
-  Vector3 camera_position_;
   Weapon* weapon_ = nullptr;
+  // Simulation state, advanced only by Simulate.
+  // The aim from the last command; the body has the yaw.
   float yaw_ = 0.0f;
   float pitch_ = 0.0f;
   float recoil_ = 0.0f;
   float recoil_yaw_ = 0.0f;
+  // Shots fired, seeding the recoil's sideways kick.
+  uint32_t shot_count_ = 0;
+  // The last command, to find button presses.
+  PlayerInput prev_input_;
+  // The eye's position relative to the body, from the scene's camera.
+  Vector3 eye_offset_ = Vector3(0.0f, kEyeHeight, 0.0f);
   // The landing dip's spring, and its offset before the last tick (for
   // drawing between ticks).
   float landing_offset_ = 0.0f;
   float landing_velocity_ = 0.0f;
   float prev_landing_offset_ = 0.0f;
+
+  // Local state (the player at this machine), not part of the simulation.
+  // The look as input arrives: the camera shows it every frame, and the
+  // next command carries it.
+  float look_yaw_ = 0.0f;
+  float look_pitch_ = 0.0f;
+  bool fire_held_ = false;
   float step_phase_ = 0.0f;
   float bob_amount_ = 0.0f;
   // Look rotation applied since the last frame, in radians.

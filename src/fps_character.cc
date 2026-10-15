@@ -15,6 +15,21 @@
 
 namespace godot {
 
+namespace {
+
+// A well-mixed value in [-1, 1] for each n (a 32-bit integer hash), so
+// "random" game state comes out the same on every machine.
+float SignedNoise(uint32_t n) {
+  n ^= n >> 16;
+  n *= 0x7feb352du;
+  n ^= n >> 15;
+  n *= 0x846ca68bu;
+  n ^= n >> 16;
+  return static_cast<float>(n) / 2147483647.5f - 1.0f;
+}
+
+}  // namespace
+
 FpsCharacter::FpsCharacter() = default;
 
 FpsCharacter::~FpsCharacter() = default;
@@ -24,7 +39,7 @@ void FpsCharacter::_ready() {
   if (camera_) {
     // Placed every frame from the latest look input (see UpdateCamera);
     // interpolating it would add a tick of look latency.
-    camera_position_ = camera_->get_position();
+    eye_offset_ = camera_->get_position();
     camera_->set_as_top_level(true);
     camera_->set_physics_interpolation_mode(PHYSICS_INTERPOLATION_MODE_OFF);
   }
@@ -34,18 +49,62 @@ void FpsCharacter::_ready() {
   }
   spawn_transform_ = get_global_transform();
   yaw_ = get_rotation().y;
+  look_yaw_ = yaw_;
   Input::get_singleton()->set_mouse_mode(Input::MOUSE_MODE_CAPTURED);
 }
 
 void FpsCharacter::_physics_process(double delta) {
-  float dt = static_cast<float>(delta);
+  Simulate(GatherInput(), static_cast<float>(delta));
+  // Tick position, not interpolated: the weapon (a child) runs its
+  // _physics_process next and aims the barrel from the camera.
+  // _process moves the camera to the drawn position before rendering.
+  UpdateCamera(get_global_transform().origin, landing_offset_, 0.0f);
+}
+
+PlayerInput FpsCharacter::GatherInput() {
+  Input* input = Input::get_singleton();
+  // A tap that starts and ends between two ticks still counts: held for
+  // this command.
+  auto held = [input](const StringName& action) {
+    return input->is_action_pressed(action) ||
+           input->is_action_just_pressed(action);
+  };
+  if (fire_held_ && !held("shoot")) {
+    fire_held_ = false;
+  }
+
+  PlayerInput command;
+  command.move =
+      input->get_vector("move_left", "move_right", "move_forward", "move_back");
+  command.yaw = look_yaw_;
+  command.pitch = look_pitch_;
+  command.jump = held("jump");
+  command.sprint = input->is_action_pressed("sprint");
+  command.fire = !fire_held_ && held("shoot");
+  command.reload = held("reload");
+  return command;
+}
+
+void FpsCharacter::Simulate(const PlayerInput& command, float dt) {
+  // The command may come over the network: keep it in range.
+  PlayerInput input = command;
+  input.move =
+      input.move.is_finite() ? input.move.limit_length(1.0f) : Vector2();
+  if (std::isfinite(input.yaw)) {
+    yaw_ = std::remainder(input.yaw, static_cast<float>(Math::TAU));
+  }
+  if (std::isfinite(input.pitch)) {
+    pitch_ = static_cast<float>(
+        UtilityFunctions::clampf(input.pitch, -kPitchLimit, kPitchLimit));
+  }
+  bool jump_pressed = input.jump && !prev_input_.jump;
+  bool reload_pressed = input.reload && !prev_input_.reload;
+  prev_input_ = input;
 
   float decay = std::exp(-kRecoilReturn * dt);
   recoil_ *= decay;
   recoil_yaw_ *= decay;
 
-  // Turn the body by the look input since the last tick; the camera has
-  // already turned (see _process).
   set_rotation(Vector3(0.0f, yaw_, 0.0f));
 
   bool was_on_floor = is_on_floor();
@@ -55,21 +114,16 @@ void FpsCharacter::_physics_process(double delta) {
     if (vel.y < 0.0f) {
       vel.y = 0.0f;
     }
-    if (Input::get_singleton()->is_action_just_pressed("jump")) {
+    if (jump_pressed) {
       vel.y = kJumpVelocity;
     }
   }
   vel += Vector3(0.0f, -kGravity, 0.0f) * dt;
 
-  Vector2 input = Input::get_singleton()->get_vector(
-      "move_left", "move_right", "move_forward", "move_back");
-  float speed = Input::get_singleton()->is_action_pressed("sprint")
-                    ? kSprintSpeed
-                    : kWalkSpeed;
-
-  // get_vector already limits the length to 1.
+  float speed = input.sprint ? kSprintSpeed : kWalkSpeed;
   Vector3 target =
-      get_transform().basis.xform(Vector3(input.x, 0.0f, input.y)) * speed;
+      get_transform().basis.xform(Vector3(input.move.x, 0.0f, input.move.y)) *
+      speed;
   // Airborne without input keeps its momentum.
   if (was_on_floor || !target.is_zero_approx()) {
     float accel = was_on_floor ? kGroundAccel : kAirAccel;
@@ -95,10 +149,20 @@ void FpsCharacter::_physics_process(double delta) {
     Respawn();
   }
 
-  // Tick position, not interpolated: the weapon (a child) runs its
-  // _physics_process next and casts its aim ray from the camera.
-  // _process moves the camera to the drawn position before rendering.
-  UpdateCamera(get_global_transform().origin, landing_offset_, 0.0f);
+  // After moving, so shots leave from where the player now is.
+  if (weapon_) {
+    weapon_->Tick(dt, input.fire, reload_pressed);
+  }
+}
+
+Transform3D FpsCharacter::AimTransform() const {
+  float pitch = static_cast<float>(
+      UtilityFunctions::clampf(pitch_ + recoil_, -kPitchLimit, kPitchLimit));
+  Basis yaw(Vector3(0.0f, 1.0f, 0.0f), yaw_);
+  return Transform3D(
+      yaw * Basis::from_euler(Vector3(pitch, recoil_yaw_, 0.0f)),
+      get_global_position() +
+          yaw.xform(eye_offset_ + Vector3(0.0f, landing_offset_, 0.0f)));
 }
 
 void FpsCharacter::_process(double delta) {
@@ -178,9 +242,7 @@ void FpsCharacter::_unhandled_input(const Ref<InputEvent>& event) {
     if (button->is_pressed() && !captured) {
       input->set_mouse_mode(Input::MOUSE_MODE_CAPTURED);
       // The click only recaptures the mouse; don't let it fire.
-      if (weapon_) {
-        weapon_->HoldFire();
-      }
+      HoldFire();
     }
   }
 }
@@ -192,8 +254,11 @@ void FpsCharacter::Respawn() {
   set_velocity(Vector3());
   yaw_ = get_rotation().y;
   pitch_ = 0.0f;
+  look_yaw_ = yaw_;
+  look_pitch_ = 0.0f;
   recoil_ = 0.0f;
   recoil_yaw_ = 0.0f;
+  prev_input_ = PlayerInput();
   bob_amount_ = 0.0f;
   landing_offset_ = 0.0f;
   landing_velocity_ = 0.0f;
@@ -210,12 +275,16 @@ void FpsCharacter::Respawn() {
 void FpsCharacter::ApplyLookDelta(const Vector2& delta, float sensitivity) {
   float yaw = -delta.x * sensitivity;
   // Wrapped, so endless turning doesn't lose float precision.
-  yaw_ = std::remainder(yaw_ + yaw, static_cast<float>(Math::TAU));
+  look_yaw_ = std::remainder(look_yaw_ + yaw, static_cast<float>(Math::TAU));
   float pitch = static_cast<float>(UtilityFunctions::clampf(
-      pitch_ - delta.y * sensitivity, -kPitchLimit, kPitchLimit));
+      look_pitch_ - delta.y * sensitivity, -kPitchLimit, kPitchLimit));
   // Only the rotation that happened: none against the pitch limit.
-  look_delta_ += Vector2(yaw, pitch - pitch_);
-  pitch_ = pitch;
+  look_delta_ += Vector2(yaw, pitch - look_pitch_);
+  look_pitch_ = pitch;
+}
+
+void FpsCharacter::HoldFire() {
+  fire_held_ = true;
 }
 
 void FpsCharacter::UpdateCamera(const Vector3& origin,
@@ -225,26 +294,28 @@ void FpsCharacter::UpdateCamera(const Vector3& origin,
     return;
   }
   float decay = std::exp(-kRecoilReturn * since_tick);
+  // The local look, not the simulated aim: it reacts to input arriving
+  // after the last tick.
   float pitch = static_cast<float>(UtilityFunctions::clampf(
-      pitch_ + recoil_ * decay, -kPitchLimit, kPitchLimit));
+      look_pitch_ + recoil_ * decay, -kPitchLimit, kPitchLimit));
   // The head is lowest when a foot lands (phase 0 and pi).
   float bob = kBobUp * bob_amount_ * -std::cos(2.0f * step_phase_);
-  Basis yaw(Vector3(0.0f, 1.0f, 0.0f), yaw_);
+  Basis yaw(Vector3(0.0f, 1.0f, 0.0f), look_yaw_);
   camera_->set_global_transform(Transform3D(
       yaw * Basis::from_euler(Vector3(pitch, recoil_yaw_ * decay, 0.0f)),
-      origin + yaw.xform(camera_position_ +
-                         Vector3(0.0f, bob + landing_dip, 0.0f))));
+      origin +
+          yaw.xform(eye_offset_ + Vector3(0.0f, bob + landing_dip, 0.0f))));
 }
 
 // static
 void FpsCharacter::_bind_methods() {
   ClassDB::bind_method(D_METHOD("respawn"), &FpsCharacter::Respawn);
+  ClassDB::bind_method(D_METHOD("hold_fire"), &FpsCharacter::HoldFire);
 }
 
 void FpsCharacter::OnWeaponFired() {
   recoil_ += kRecoilKick;
-  recoil_yaw_ += static_cast<float>(
-      UtilityFunctions::randf_range(-kRecoilYawKick, kRecoilYawKick));
+  recoil_yaw_ += kRecoilYawKick * SignedNoise(shot_count_++);
 }
 
 }  // namespace godot

@@ -27,11 +27,12 @@ class Weapon : public Node3D {
   void _process(double delta) override;
   void _physics_process(double delta) override;
 
+  // One physics tick, from the owner's simulation: advance reload and fire
+  // timers, then fire (while fire is held) or start reloading (on a reload
+  // press).
+  void Tick(float dt, bool fire, bool reload_pressed);
   void Shoot();
   void StartReload();
-  // Ignore the current "shoot" press (e.g. the click that recaptured the
-  // mouse) until it is released.
-  void HoldFire();
   // Full magazine and reserve, reload cancelled (respawn).
   void Refill();
 
@@ -93,9 +94,12 @@ class Weapon : public Node3D {
   // The viewport's current camera; null if there is none or the weapon is
   // outside the tree.
   Camera3D* ActiveCamera() const;
-  // Ray from the camera's center through the crosshair. Returns
-  // intersect_ray's result (empty: no hit).
-  Dictionary CastAimRay(Camera3D* camera);
+  // Where shots come from: the owner's aim (game state, the same on a
+  // server), or the weapon's own transform without an owner.
+  Transform3D ShotTransform() const;
+  // Ray from aim's origin along its -Z, kRange long, not hitting the
+  // owner. Returns intersect_ray's result (empty: no hit).
+  Dictionary CastRay(const Transform3D& aim);
   // Measure how far the crosshair's hit point is (a physics query, so once
   // per tick), for UpdatePose to aim the barrel at.
   void UpdateAimTarget();
@@ -144,7 +148,6 @@ class Weapon : public Node3D {
   bool reloading_ = false;
   float reload_timer_ = 0.0f;
   float fire_cooldown_ = 0.0f;
-  bool fire_held_ = false;
   int start_reserve_ammo_ = 0;
 
   float damage_ = 25.0f;

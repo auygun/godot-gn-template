@@ -6,7 +6,6 @@
 #include <godot_cpp/classes/audio_stream_player3d.hpp>
 #include <godot_cpp/classes/camera3d.hpp>
 #include <godot_cpp/classes/cpu_particles3d.hpp>
-#include <godot_cpp/classes/input.hpp>
 #include <godot_cpp/classes/omni_light3d.hpp>
 #include <godot_cpp/classes/physics_body3d.hpp>
 #include <godot_cpp/classes/physics_direct_space_state3d.hpp>
@@ -87,12 +86,12 @@ void Weapon::_process(double delta) {
 }
 
 void Weapon::_physics_process(double delta) {
-  float dt = static_cast<float>(delta);
-
   // The owner's _physics_process (which runs first) has already turned the
   // camera this tick.
   UpdateAimTarget();
+}
 
+void Weapon::Tick(float dt, bool fire, bool reload_pressed) {
   if (reloading_) {
     reload_timer_ -= dt;
     if (reload_timer_ <= 0.0f) {
@@ -109,21 +108,11 @@ void Weapon::_physics_process(double delta) {
     fire_cooldown_ -= dt;
   }
 
-  Input* input = Input::get_singleton();
-  // A tap that starts and ends between two ticks still counts: held for
-  // this tick.
-  bool shoot_held = input->is_action_pressed("shoot") ||
-                    input->is_action_just_pressed("shoot");
-  if (fire_held_ && !shoot_held) {
-    fire_held_ = false;
-  }
-
-  if (input->is_action_just_pressed("reload") && !reloading_ &&
-      ammo_ < max_ammo_ && reserve_ammo_ > 0) {
+  if (reload_pressed) {
     StartReload();
   }
 
-  if (!reloading_ && !fire_held_ && fire_cooldown_ <= 0.0f && shoot_held) {
+  if (!reloading_ && fire_cooldown_ <= 0.0f && fire) {
     if (ammo_ > 0) {
       Shoot();
     } else {
@@ -133,6 +122,8 @@ void Weapon::_physics_process(double delta) {
 }
 
 void Weapon::Shoot() {
+  // Before "fired": the owner's recoil kick is for the next shot.
+  Transform3D aim = ShotTransform();
   ammo_--;
   // Accumulate rather than set: the cooldown overshoots below zero by up
   // to a frame, and resetting that would lower the fire rate.
@@ -146,12 +137,7 @@ void Weapon::Shoot() {
   ShowMuzzleFlash();
   PlayFireSound();
 
-  Camera3D* camera = ActiveCamera();
-  if (!camera) {
-    return;
-  }
-  Vector3 from = camera->get_global_transform().origin;
-  Dictionary result = CastAimRay(camera);
+  Dictionary result = CastRay(aim);
   if (result.has("collider")) {
     Object* collider = result.get("collider", Variant());
     emit_signal("hit", collider);
@@ -159,7 +145,7 @@ void Weapon::Shoot() {
                 result.get("normal", Variant()));
     Target* target = Object::cast_to<Target>(collider);
     if (target) {
-      target->TakeDamage(damage_, from);
+      target->TakeDamage(damage_, aim.origin);
     }
   }
 }
@@ -171,10 +157,15 @@ Camera3D* Weapon::ActiveCamera() const {
   return viewport ? viewport->get_camera_3d() : nullptr;
 }
 
-Dictionary Weapon::CastAimRay(Camera3D* camera) {
-  Transform3D camera_xf = camera->get_global_transform();
-  Vector3 from = camera_xf.origin;
-  Vector3 to = camera_xf.xform(Vector3(0.0f, 0.0f, -kRange));
+Transform3D Weapon::ShotTransform() const {
+  FpsCharacter* owner_character = Object::cast_to<FpsCharacter>(get_parent());
+  return owner_character ? owner_character->AimTransform()
+                         : get_global_transform();
+}
+
+Dictionary Weapon::CastRay(const Transform3D& aim) {
+  Vector3 from = aim.origin;
+  Vector3 to = aim.xform(Vector3(0.0f, 0.0f, -kRange));
 
   Ref<PhysicsRayQueryParameters3D> query =
       PhysicsRayQueryParameters3D::create(from, to);
@@ -204,11 +195,13 @@ void Weapon::UpdateAimTarget() {
   if (!camera) {
     return;
   }
+  // Cosmetic: the barrel points at what the crosshair (the camera) is on.
+  Transform3D camera_xf = camera->get_global_transform();
   float hit_distance = kRange;
-  Dictionary result = CastAimRay(camera);
+  Dictionary result = CastRay(camera_xf);
   if (result.has("position")) {
     Vector3 position = result.get("position", Variant());
-    hit_distance = camera->get_global_transform().origin.distance_to(position);
+    hit_distance = camera_xf.origin.distance_to(position);
   }
   aim_target_distance_ =
       static_cast<float>(UtilityFunctions::maxf(hit_distance, kMinAimDistance));
@@ -350,10 +343,6 @@ void Weapon::StartReload() {
   emit_signal("ammo_changed", ammo_, reserve_ammo_, reloading_);
 }
 
-void Weapon::HoldFire() {
-  fire_held_ = true;
-}
-
 void Weapon::Refill() {
   reloading_ = false;
   reload_timer_ = 0.0f;
@@ -372,7 +361,6 @@ void Weapon::Refill() {
 void Weapon::_bind_methods() {
   ClassDB::bind_method(D_METHOD("shoot"), &Weapon::Shoot);
   ClassDB::bind_method(D_METHOD("start_reload"), &Weapon::StartReload);
-  ClassDB::bind_method(D_METHOD("hold_fire"), &Weapon::HoldFire);
   ClassDB::bind_method(D_METHOD("refill"), &Weapon::Refill);
   ClassDB::bind_method(D_METHOD("get_ammo"), &Weapon::ammo);
   ClassDB::bind_method(D_METHOD("get_reserve_ammo"), &Weapon::reserve_ammo);

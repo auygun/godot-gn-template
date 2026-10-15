@@ -63,6 +63,21 @@ class Weapon : public Node3D {
   static constexpr float kKickReturn = 12.0f;  // decay rate, 1/s
   // The kick rotates around the grip, this far behind the weapon's origin.
   static constexpr float kGripOffset = 0.2f;  // meters
+  // Walking bobs the weapon in a figure eight on top of the camera's bob,
+  // with a sideways rock; sizes at walk speed.
+  static constexpr float kBobSide = 0.012f;  // meters
+  static constexpr float kBobUp = 0.008f;    // meters
+  static constexpr float kBobRoll = 0.02f;   // radians
+  // The weapon lags behind turning (radians per radian/s of turn rate,
+  // capped) and behind moving (meters per m/s, capped), springing back at
+  // kSwayRate, 1/s.
+  static constexpr float kLookSway = 0.012f;
+  static constexpr float kMaxLookSway = 0.08f;  // radians
+  static constexpr float kMoveSway = 0.004f;
+  static constexpr float kMaxMoveSway = 0.03f;  // meters
+  static constexpr float kSwayRate = 10.0f;
+  // Landing dips the weapon this much more than the camera.
+  static constexpr float kLandingDip = 0.6f;
   // How long the muzzle flash stays up after a shot, in seconds.
   static constexpr float kFlashTime = 0.06f;
   static constexpr float kFlashLightEnergy = 3.0f;
@@ -103,6 +118,9 @@ class Weapon : public Node3D {
   float kick_back_ = 0.0f;
   float kick_pitch_ = 0.0f;
   float kick_yaw_ = 0.0f;
+  // Smoothed sway: x yaw, y pitch (radians); position in camera space.
+  Vector2 look_sway_;
+  Vector3 move_sway_;
 
   // Muzzle effect nodes (Muzzle/Flash, its Light, Muzzle/Sparks,
   // Muzzle/Smoke).

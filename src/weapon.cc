@@ -19,6 +19,7 @@
 #include <godot_cpp/variant/typed_array.hpp>
 #include <godot_cpp/variant/utility_functions.hpp>
 
+#include "src/fps_character.h"
 #include "src/impact.h"
 #include "src/target.h"
 
@@ -219,7 +220,31 @@ void Weapon::UpdatePose(float dt) {
     return;
   }
   Transform3D camera_xf = camera->get_global_transform();
-  Vector3 origin = (camera_xf * camera_offset_).origin;
+
+  // Bob and sway, from the owner's motion; none without one.
+  Vector3 bob;
+  float roll = 0.0f;
+  Vector2 look_sway_target;
+  Vector3 move_sway_target;
+  FpsCharacter* owner_character = Object::cast_to<FpsCharacter>(get_parent());
+  if (owner_character) {
+    float phase = owner_character->step_phase();
+    float amount = owner_character->bob_amount();
+    bob = Vector3(kBobSide * std::sin(phase), kBobUp * std::sin(2.0f * phase),
+                  0.0f) *
+              amount +
+          Vector3(0.0f, kLandingDip * owner_character->landing_offset(), 0.0f);
+    roll = kBobRoll * amount * std::sin(phase);
+    look_sway_target = (-kLookSway * owner_character->look_velocity())
+                           .limit_length(kMaxLookSway);
+    move_sway_target = (-kMoveSway * owner_character->local_velocity())
+                           .limit_length(kMaxMoveSway);
+  }
+  float sway_blend = 1.0f - std::exp(-kSwayRate * dt);
+  look_sway_ += (look_sway_target - look_sway_) * sway_blend;
+  move_sway_ += (move_sway_target - move_sway_) * sway_blend;
+
+  Vector3 origin = camera_xf.xform(camera_offset_.origin + bob + move_sway_);
 
   // Smoothed, so the barrel doesn't snap when the crosshair crosses an edge.
   aim_distance_ += (aim_target_distance_ - aim_distance_) *
@@ -236,8 +261,9 @@ void Weapon::UpdatePose(float dt) {
   kick_yaw_ *= decay;
   set_global_transform(
       aim_xf.translated_local(Vector3(0.0f, 0.0f, kGripOffset))
-          .rotated_local(Vector3(0.0f, 1.0f, 0.0f), kick_yaw_)
-          .rotated_local(Vector3(1.0f, 0.0f, 0.0f), kick_pitch_)
+          .rotated_local(Vector3(0.0f, 1.0f, 0.0f), kick_yaw_ + look_sway_.x)
+          .rotated_local(Vector3(1.0f, 0.0f, 0.0f), kick_pitch_ + look_sway_.y)
+          .rotated_local(Vector3(0.0f, 0.0f, 1.0f), roll)
           .translated_local(Vector3(0.0f, 0.0f, kick_back_ - kGripOffset)));
 }
 
@@ -335,6 +361,8 @@ void Weapon::Refill() {
   kick_back_ = 0.0f;
   kick_pitch_ = 0.0f;
   kick_yaw_ = 0.0f;
+  look_sway_ = Vector2();
+  move_sway_ = Vector3();
   ammo_ = max_ammo_;
   reserve_ammo_ = start_reserve_ammo_;
   emit_signal("ammo_changed", ammo_, reserve_ammo_, reloading_);

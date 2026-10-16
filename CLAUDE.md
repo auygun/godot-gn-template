@@ -24,6 +24,7 @@ godot --path .                        # play offline (-e for the editor)
 godot --path . -- --host [port]       # listen server (default port 24680)
 godot --path . -- --join <addr> [port]
 godot --headless --path . -- --server [port]   # dedicated server
+# ... --lag <ms> --loss <percent> after the mode simulates a bad network
 
 # Android, one ABI per out dir (target_cpu: arm64, x64, arm, x86)
 gn gen --args='ndk="/path/to/ndk" target_os="android" target_cpu="arm64"' out/android/release
@@ -105,7 +106,7 @@ ninja -C out/android/release          # .so + app.apk (no_apk=true for just the 
   enabled in `project.godot`. Keep new gameplay state on the simulation side
   so a server without devices or a camera could run it.
 
-## Multiplayer (`src/main.cc`, `src/net_protocol.h`)
+## Multiplayer (`src/main.cc`, `src/client_prediction.cc`, `src/net_protocol.h`)
 
 - Server-authoritative. The mode comes from the user args after `--`
   (`Main::ParseCommandLine`); offline is a server without the network, so
@@ -120,10 +121,23 @@ ninja -C out/android/release          # .so + app.apk (no_apk=true for just the 
   `PlayerState` (`src/player_state.h`, everything `Simulate` reads or
   writes), the targets, and the client's last simulated command (`ack`).
   Hits and kills go to the shooter as reliable events.
-- A client applies the newest snapshot (`FpsCharacter::ApplyState`, which
-  plays a shot's effects when `shot_count` goes up) and sends its last 4
-  commands each tick. It doesn't simulate yet (prediction is phase 2), so
-  only its look is immediate.
+- A client predicts its own player (`ClientPrediction`): each tick it
+  simulates its new command right away (`SimulationMode::kPredicted`:
+  effects, but hits and damage stay the server's) and sends its last 4
+  commands. On a snapshot, if the server's state after the acknowledged
+  command differs from the prediction, it restores the server's state and
+  replays the unacknowledged commands (`kReplay`: game state only); the
+  camera eases across the difference (`SmoothCorrection`). Other players
+  get the snapshot's state (`FpsCharacter::ApplyState`, which plays a
+  shot's effects when `shot_count` goes up).
+- The server simulates each client's commands by sequence number, one per
+  tick; a missing one is replaced by repeating the last, and dropped if it
+  comes later. Snapshots report how early the client's commands arrive
+  (`input_buffer`), and the client keeps that at 2 ticks by skipping
+  sequence numbers (late) or a tick's command (too early). Only
+  `Simulate`'s inputs and `PlayerState` may affect the outcome, or
+  predictions won't match: e.g. floor snapping goes by `on_floor_`, not
+  the body's last `move_and_slide`.
 - Characters that aren't the local player's (`set_local(false)`) drop their
   camera and touch controls, and their weapon stays on the body. Anything
   new in `Simulate` belongs in `PlayerState` and the snapshot.

@@ -32,7 +32,10 @@ class Weapon : public Node3D {
   // One physics tick, from the owner's simulation: advance reload and fire
   // timers, then fire (while fire is held) or start reloading (on a reload
   // press).
-  void Tick(float dt, bool fire, bool reload_pressed);
+  void Tick(float dt,
+            bool fire,
+            bool reload_pressed,
+            SimulationMode mode = SimulationMode::kAuthoritative);
   void Shoot();
   void StartReload();
   // Full magazine and reserve, reload cancelled (respawn).
@@ -44,7 +47,7 @@ class Weapon : public Node3D {
 
   // The game state, for the owner's.
   WeaponState CaptureState() const;
-  void ApplyState(const WeaponState& state);
+  void RestoreState(const WeaponState& state);
   // A shot from aim that the server simulated: its effects, and an impact
   // where a ray (cosmetic, against what this machine sees) hits.
   void PlayShotEffects(const Transform3D& aim);
@@ -119,6 +122,9 @@ class Weapon : public Node3D {
   // Follow the camera (keeping the scene's offset from it) and point the
   // barrel at what the crosshair is on.
   void UpdatePose(float dt);
+  // Fire a shot from the owner's aim. Only an authoritative shot hits;
+  // a predicted one plays its effects, a replayed one nothing.
+  void Fire(SimulationMode mode);
   // A shot's kick, muzzle flash and sound.
   void PlayFireEffects();
   void ShowMuzzleFlash();

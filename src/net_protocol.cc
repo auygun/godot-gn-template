@@ -222,6 +222,7 @@ PackedByteArray EncodeSnapshot(const SnapshotMessage& message) {
   ByteWriter writer(MessageType::kSnapshot);
   writer.U32(message.tick);
   writer.U32(message.ack);
+  writer.U8(static_cast<uint8_t>(message.input_buffer));
   writer.U8(static_cast<uint8_t>(message.players.size()));
   for (const SnapshotPlayer& player : message.players) {
     writer.U32(static_cast<uint32_t>(player.peer_id));
@@ -239,6 +240,7 @@ bool DecodeSnapshot(const PackedByteArray& bytes, SnapshotMessage* message) {
   ByteReader reader(bytes, MessageType::kSnapshot);
   message->tick = reader.U32();
   message->ack = reader.U32();
+  message->input_buffer = static_cast<int8_t>(reader.U8());
   int player_count = reader.U8();
   if (!reader.ok() || player_count > kMaxSnapshotPlayers) {
     return false;

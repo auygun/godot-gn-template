@@ -19,7 +19,7 @@ namespace godot {
 //
 // Everything is little-endian (every supported platform is), floats raw.
 
-inline constexpr uint8_t kProtocolVersion = 1;
+inline constexpr uint8_t kProtocolVersion = 2;
 inline constexpr int kDefaultPort = 24680;
 
 enum class MessageType : uint8_t {
@@ -67,6 +67,10 @@ struct SnapshotMessage {
   uint32_t tick = 0;
   // The last of this client's commands the server simulated (0: none).
   uint32_t ack = 0;
+  // How many ticks ahead of being simulated this client's commands arrive:
+  // the newest received minus ack. Negative when they arrive too late (the
+  // server repeated the last command in their place).
+  int8_t input_buffer = 0;
   std::vector<SnapshotPlayer> players;
   // In the order of the scene's Targets, the same on both sides.
   std::vector<SnapshotTarget> targets;

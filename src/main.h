@@ -1,18 +1,19 @@
 #ifndef SRC_MAIN_H_
 #define SRC_MAIN_H_
 
-#include <array>
 #include <cstdint>
 #include <deque>
 #include <map>
 #include <vector>
 
+#include <godot_cpp/classes/multiplayer_peer.hpp>
 #include <godot_cpp/classes/node.hpp>
 #include <godot_cpp/classes/packed_scene.hpp>
 #include <godot_cpp/classes/scene_multiplayer.hpp>
 #include <godot_cpp/core/binder_common.hpp>
 #include <godot_cpp/core/gdvirtual.gen.inc>
 
+#include "src/client_prediction.h"
 #include "src/net_protocol.h"
 #include "src/player_input.h"
 
@@ -35,6 +36,8 @@ class Target;
 //   --host [port]           listen server, with a local player
 //   --server [port]         dedicated server, no local player (--headless)
 //   --join <address> [port] client
+//
+// followed by --lag <ms> and --loss <percent> to simulate a bad network.
 class Main : public Node {
   GDCLASS(Main, Node);
 
@@ -61,20 +64,25 @@ class Main : public Node {
   // machine).
   static constexpr int kServerPeerId = 1;
   static constexpr int kMaxClients = 15;
-  // Commands a server keeps queued for a client; past this it drops the
-  // oldest, so a burst of late packets doesn't become lasting lag.
-  static constexpr size_t kMaxQueuedCommands = 8;
+  // How far ahead of the next command to simulate the server keeps a
+  // client's commands.
+  static constexpr uint32_t kMaxQueuedCommands = 32;
+  // Simulated network conditions (--lag ms, --loss percent), for testing
+  // prediction: every packet this machine sends is held back or dropped.
+  static constexpr int kMaxLagMs = 1000;
 
-  // On the server, per client.
+  // On the server, per client. Each tick simulates the client's next
+  // command by sequence number; if it hasn't arrived, the last command
+  // again in its place (and the real one is dropped when it comes).
   struct ClientConnection {
-    struct QueuedCommand {
-      uint32_t sequence = 0;
-      PlayerInput command;
-    };
-    std::deque<QueuedCommand> queue;
-    // The newest command received, and the last simulated (repeated while
-    // the queue is empty).
+    // Received commands not yet simulated, by sequence number.
+    std::map<uint32_t, PlayerInput> queue;
+    // The next sequence number to simulate; 0 until the first command
+    // arrives.
+    uint32_t next_sequence = 0;
+    // The newest sequence number received.
     uint32_t last_received = 0;
+    // The last sequence number simulated (0: none), and its command.
     uint32_t last_simulated = 0;
     PlayerInput last_command;
   };
@@ -92,11 +100,16 @@ class Main : public Node {
   Transform3D NextSpawnTransform();
 
   void ServerTick(float dt);
-  void ClientTick();
+  void ClientTick(float dt);
   void SendSnapshots();
-  void ApplySnapshot(const SnapshotMessage& snapshot);
-  void SendInput(const PlayerInput& command);
+  void ApplySnapshot(const SnapshotMessage& snapshot, float dt);
+  void SendInput();
   void SendEvent(int peer_id, EventType type);
+  // send_bytes through the simulated lag and loss.
+  void Send(const PackedByteArray& bytes,
+            int peer_id,
+            MultiplayerPeer::TransferMode mode);
+  void FlushDelayedPackets();
 
   void OnPeerConnected(int64_t peer_id);
   void OnPeerDisconnected(int64_t peer_id);
@@ -138,9 +151,19 @@ class Main : public Node {
   SnapshotMessage snapshot_;
   bool has_snapshot_ = false;
   bool snapshot_pending_ = false;
-  // The last commands sent, by sequence number.
-  uint32_t sequence_ = 0;
-  std::array<PlayerInput, kMaxInputCommands> recent_commands_;
+  ClientPrediction prediction_;
+
+  // Simulated network conditions.
+  struct DelayedPacket {
+    uint64_t send_at_usec = 0;
+    PackedByteArray bytes;
+    int peer_id = 0;
+    MultiplayerPeer::TransferMode mode =
+        MultiplayerPeer::TRANSFER_MODE_RELIABLE;
+  };
+  int lag_ms_ = 0;
+  int loss_percent_ = 0;
+  std::deque<DelayedPacket> delayed_packets_;
 };
 
 }  // namespace godot

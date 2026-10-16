@@ -10,6 +10,7 @@
 #include <godot_cpp/classes/node3d.hpp>
 #include <godot_cpp/classes/os.hpp>
 #include <godot_cpp/classes/scene_tree.hpp>
+#include <godot_cpp/classes/time.hpp>
 #include <godot_cpp/core/class_db.hpp>
 #include <godot_cpp/variant/utility_functions.hpp>
 
@@ -70,7 +71,7 @@ void Main::_ready() {
   if (!ParseCommandLine()) {
     UtilityFunctions::push_error(
         "Usage: -- [--host [port] | --server [port] | --join <address> "
-        "[port]]");
+        "[port]] [--lag <ms>] [--loss <percent>]");
     get_tree()->quit(1);
     return;
   }
@@ -96,28 +97,41 @@ void Main::_ready() {
 
 bool Main::ParseCommandLine() {
   PackedStringArray args = OS::get_singleton()->get_cmdline_user_args();
-  if (args.is_empty()) {
-    return true;
-  }
-  int port_index = 1;
-  if (args[0] == "--host") {
-    mode_ = Mode::kHost;
-  } else if (args[0] == "--server") {
-    mode_ = Mode::kDedicated;
-  } else if (args[0] == "--join" && args.size() >= 2) {
+  int i = 0;
+  if (i < args.size() && (args[i] == "--host" || args[i] == "--server")) {
+    mode_ = args[i] == "--host" ? Mode::kHost : Mode::kDedicated;
+    i++;
+  } else if (i < args.size() && args[i] == "--join") {
+    if (i + 1 >= args.size()) {
+      return false;
+    }
     mode_ = Mode::kClient;
-    address_ = args[1];
-    port_index = 2;
-  } else {
-    return false;
+    address_ = args[i + 1];
+    i += 2;
   }
-  if (args.size() > port_index + 1) {
-    return false;
+  if (mode_ != Mode::kOffline && i < args.size() &&
+      !args[i].begins_with("--")) {
+    port_ = ParsePort(args[i]);
+    if (port_ == 0) {
+      return false;
+    }
+    i++;
   }
-  if (args.size() == port_index + 1) {
-    port_ = ParsePort(args[port_index]);
+  while (i < args.size()) {
+    if (i + 1 >= args.size() || !args[i + 1].is_valid_int()) {
+      return false;
+    }
+    int64_t value = args[i + 1].to_int();
+    if (args[i] == "--lag" && value >= 0 && value <= kMaxLagMs) {
+      lag_ms_ = static_cast<int>(value);
+    } else if (args[i] == "--loss" && value >= 0 && value <= 100) {
+      loss_percent_ = static_cast<int>(value);
+    } else {
+      return false;
+    }
+    i += 2;
   }
-  return port_ != 0;
+  return true;
 }
 
 bool Main::StartNetwork() {
@@ -167,6 +181,10 @@ bool Main::StartNetwork() {
                           callable_mp(this, &Main::OnPeerDisconnected));
     UtilityFunctions::print(vformat("Main: listening on port %d", port_));
   }
+  if (lag_ms_ > 0 || loss_percent_ > 0) {
+    UtilityFunctions::print(vformat("Main: simulating %d ms lag, %d%% loss",
+                                    lag_ms_, loss_percent_));
+  }
   if (mode_ == Mode::kDedicated) {
     // Nothing to draw: don't spin between ticks.
     Engine* engine = Engine::get_singleton();
@@ -176,6 +194,11 @@ bool Main::StartNetwork() {
 }
 
 void Main::_exit_tree() {
+  if (mode_ == Mode::kClient) {
+    UtilityFunctions::print(
+        vformat("Main: predicted %d commands, %d corrections",
+                prediction_.predicted_count(), prediction_.correction_count()));
+  }
   if (multiplayer_.is_valid() && mode_ != Mode::kOffline) {
     // Tells the other side now, rather than letting it time out.
     Ref<MultiplayerPeer> peer = multiplayer_->get_multiplayer_peer();
@@ -187,10 +210,11 @@ void Main::_exit_tree() {
 
 void Main::_physics_process(double delta) {
   if (mode_ == Mode::kClient) {
-    ClientTick();
+    ClientTick(static_cast<float>(delta));
   } else {
     ServerTick(static_cast<float>(delta));
   }
+  FlushDelayedPackets();
 }
 
 FpsCharacter* Main::SpawnPlayer(int peer_id, const Transform3D& transform) {
@@ -253,12 +277,16 @@ void Main::ServerTick(float dt) {
       continue;
     }
     ClientConnection& connection = client->second;
-    // Without a new command (late or lost), repeat the last: buttons are
-    // held states and the look is absolute, so that's the best guess.
-    if (!connection.queue.empty()) {
-      connection.last_command = connection.queue.front().command;
-      connection.last_simulated = connection.queue.front().sequence;
-      connection.queue.pop_front();
+    if (connection.next_sequence != 0) {
+      // Without the next command (late or lost), repeat the last in its
+      // place: buttons are held states and the look is absolute, so that's
+      // the best guess.
+      auto next = connection.queue.find(connection.next_sequence);
+      if (next != connection.queue.end()) {
+        connection.last_command = next->second;
+        connection.queue.erase(next);
+      }
+      connection.last_simulated = connection.next_sequence++;
     }
     player->Simulate(connection.last_command, dt);
   }
@@ -281,23 +309,38 @@ void Main::SendSnapshots() {
   }
   for (const auto& [peer_id, connection] : clients_) {
     snapshot.ack = connection.last_simulated;
-    multiplayer_->send_bytes(EncodeSnapshot(snapshot), peer_id,
-                             MultiplayerPeer::TRANSFER_MODE_UNRELIABLE);
+    // How far the client's commands arrive ahead of when they're
+    // simulated.
+    int32_t buffer = connection.last_simulated == 0
+                         ? 0
+                         : static_cast<int32_t>(connection.last_received -
+                                                connection.last_simulated);
+    snapshot.input_buffer = static_cast<int8_t>(std::clamp(buffer, -127, 127));
+    Send(EncodeSnapshot(snapshot), peer_id,
+         MultiplayerPeer::TRANSFER_MODE_UNRELIABLE);
   }
 }
 
-void Main::ClientTick() {
+void Main::ClientTick(float dt) {
+  auto local = players_.find(local_peer_id_);
+  FpsCharacter* player = local != players_.end() ? local->second : nullptr;
   if (snapshot_pending_) {
     snapshot_pending_ = false;
-    ApplySnapshot(snapshot_);
+    ApplySnapshot(snapshot_, dt);
   }
-  auto local = players_.find(local_peer_id_);
-  if (local != players_.end()) {
-    SendInput(local->second->GatherInput());
+  if (!player) {
+    return;
   }
+  // Our own player moves now, under the command the server will get.
+  PlayerInput command = player->GatherInput();
+  if (prediction_.SkipThisTick()) {
+    return;
+  }
+  prediction_.Predict(player, command, dt);
+  SendInput();
 }
 
-void Main::ApplySnapshot(const SnapshotMessage& snapshot) {
+void Main::ApplySnapshot(const SnapshotMessage& snapshot, float dt) {
   // Which of the players is ours.
   if (local_peer_id_ == 0) {
     return;
@@ -318,8 +361,16 @@ void Main::ApplySnapshot(const SnapshotMessage& snapshot) {
       if (!player) {
         continue;
       }
+      if (entry.peer_id == local_peer_id_) {
+        player->ApplyState(entry.state);
+      }
     }
-    player->ApplyState(entry.state);
+    if (entry.peer_id == local_peer_id_) {
+      prediction_.Reconcile(player, snapshot.ack, snapshot.input_buffer,
+                            entry.state, dt);
+    } else {
+      player->ApplyState(entry.state);
+    }
   }
   std::vector<int> gone;
   for (const auto& [peer_id, player] : players_) {
@@ -338,17 +389,9 @@ void Main::ApplySnapshot(const SnapshotMessage& snapshot) {
   }
 }
 
-void Main::SendInput(const PlayerInput& command) {
-  sequence_++;
-  recent_commands_[sequence_ % kMaxInputCommands] = command;
-  InputMessage message;
-  message.sequence = sequence_;
-  uint32_t count = std::min<uint32_t>(sequence_, kMaxInputCommands);
-  for (uint32_t s = sequence_ - count + 1; s != sequence_ + 1; s++) {
-    message.commands.push_back(recent_commands_[s % kMaxInputCommands]);
-  }
-  multiplayer_->send_bytes(EncodeInput(message), kServerPeerId,
-                           MultiplayerPeer::TRANSFER_MODE_UNRELIABLE);
+void Main::SendInput() {
+  Send(EncodeInput(prediction_.MakeInputMessage()), kServerPeerId,
+       MultiplayerPeer::TRANSFER_MODE_UNRELIABLE);
 }
 
 void Main::SendEvent(int peer_id, EventType type) {
@@ -357,8 +400,38 @@ void Main::SendEvent(int peer_id, EventType type) {
   }
   EventMessage message;
   message.type = type;
-  multiplayer_->send_bytes(EncodeEvent(message), peer_id,
-                           MultiplayerPeer::TRANSFER_MODE_RELIABLE);
+  Send(EncodeEvent(message), peer_id, MultiplayerPeer::TRANSFER_MODE_RELIABLE);
+}
+
+void Main::Send(const PackedByteArray& bytes,
+                int peer_id,
+                MultiplayerPeer::TransferMode mode) {
+  if (lag_ms_ == 0 && loss_percent_ == 0) {
+    multiplayer_->send_bytes(bytes, peer_id, mode);
+    return;
+  }
+  // Loss only drops unreliable packets, as the network's would be resent.
+  if (mode != MultiplayerPeer::TRANSFER_MODE_RELIABLE &&
+      static_cast<int>(UtilityFunctions::randi() % 100) < loss_percent_) {
+    return;
+  }
+  uint64_t now = Time::get_singleton()->get_ticks_usec();
+  delayed_packets_.push_back(
+      {now + static_cast<uint64_t>(lag_ms_) * 1000, bytes, peer_id, mode});
+  FlushDelayedPackets();
+}
+
+void Main::FlushDelayedPackets() {
+  uint64_t now = Time::get_singleton()->get_ticks_usec();
+  while (!delayed_packets_.empty() &&
+         delayed_packets_.front().send_at_usec <= now) {
+    const DelayedPacket& packet = delayed_packets_.front();
+    // Not to a client that left meanwhile.
+    if (packet.peer_id == kServerPeerId || clients_.count(packet.peer_id)) {
+      multiplayer_->send_bytes(packet.bytes, packet.peer_id, packet.mode);
+    }
+    delayed_packets_.pop_front();
+  }
 }
 
 void Main::OnPeerConnected(int64_t peer_id) {
@@ -367,7 +440,7 @@ void Main::OnPeerConnected(int64_t peer_id) {
   FpsCharacter* player =
       SpawnPlayer(static_cast<int>(peer_id), NextSpawnTransform());
   if (player) {
-    // The client's look starts where the spawn faces.
+    // Until its first command, the client looks where the spawn faces.
     clients_[static_cast<int>(peer_id)].last_command.yaw =
         player->get_rotation().y;
   }
@@ -436,15 +509,24 @@ void Main::OnInput(int peer_id, const PackedByteArray& bytes) {
   }
   ClientConnection& connection = client->second;
   uint32_t count = static_cast<uint32_t>(message.commands.size());
-  for (uint32_t i = 0; i < count; i++) {
-    uint32_t sequence = message.sequence - (count - 1 - i);
-    if (SequenceNewer(sequence, connection.last_received)) {
-      connection.queue.push_back({sequence, message.commands[i]});
-      connection.last_received = sequence;
+  if (connection.next_sequence == 0) {
+    // The first command: start there.
+    connection.next_sequence = message.sequence - (count - 1);
+    if (connection.next_sequence == 0) {
+      connection.next_sequence = 1;
     }
   }
-  while (connection.queue.size() > kMaxQueuedCommands) {
-    connection.queue.pop_front();
+  if (SequenceNewer(message.sequence, connection.last_received)) {
+    connection.last_received = message.sequence;
+  }
+  for (uint32_t i = 0; i < count; i++) {
+    uint32_t sequence = message.sequence - (count - 1 - i);
+    // Not ones simulated already (or repeated in their place), nor far
+    // ahead (the client shortens its lead when told about it).
+    if (!SequenceNewer(connection.next_sequence, sequence) &&
+        sequence - connection.next_sequence < kMaxQueuedCommands) {
+      connection.queue.emplace(sequence, message.commands[i]);
+    }
   }
 }
 

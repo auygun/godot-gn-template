@@ -51,6 +51,7 @@ void FpsCharacter::_ready() {
     camera_->set_as_top_level(true);
     camera_->set_physics_interpolation_mode(PHYSICS_INTERPOLATION_MODE_OFF);
   }
+  floor_snap_length_ = get_floor_snap_length();
   spawn_transform_ = get_global_transform();
   yaw_ = get_rotation().y;
   look_yaw_ = yaw_;
@@ -83,10 +84,17 @@ void FpsCharacter::set_local(bool local) {
 void FpsCharacter::_physics_process(double delta) {
   // Main has already simulated (or, on a client, applied the server's
   // state for) this tick.
+  prev_correction_offset_ = correction_offset_;
+  correction_offset_ =
+      correction_offset_ *
+          std::exp(-kCorrectionRate * static_cast<float>(delta)) +
+      new_correction_;
+  new_correction_ = Vector3();
   // Tick position, not interpolated: the weapon (a child) runs its
   // _physics_process next and aims the barrel from the camera.
   // _process moves the camera to the drawn position before rendering.
-  UpdateCamera(get_global_transform().origin, landing_offset_, 0.0f);
+  UpdateCamera(get_global_transform().origin, landing_offset_,
+               correction_offset_, 0.0f);
 }
 
 PlayerInput FpsCharacter::GatherInput() {
@@ -114,7 +122,9 @@ PlayerInput FpsCharacter::GatherInput() {
   return command;
 }
 
-void FpsCharacter::Simulate(const PlayerInput& command, float dt) {
+void FpsCharacter::Simulate(const PlayerInput& command,
+                            float dt,
+                            SimulationMode mode) {
   // The command may come over the network: keep it in range.
   PlayerInput input = command;
   input.move =
@@ -167,6 +177,10 @@ void FpsCharacter::Simulate(const PlayerInput& command, float dt) {
   // floor it lands on.
   float fall_speed = -vel.y;
   set_velocity(vel);
+  // move_and_slide snaps to the floor if its last call ended on one; going
+  // by on_floor_ instead keeps the result a function of the game state
+  // (the last call may be a later tick, when replaying).
+  set_floor_snap_length(was_on_floor ? floor_snap_length_ : 0.0f);
   move_and_slide();
 
   on_floor_ = is_on_floor();
@@ -176,13 +190,14 @@ void FpsCharacter::Simulate(const PlayerInput& command, float dt) {
   local_velocity_ = get_global_basis().xform_inv(get_real_velocity());
 
   // Walked off the edge of the map.
-  if (get_global_transform().origin.y < kFallLimit) {
+  if (mode == SimulationMode::kAuthoritative &&
+      get_global_transform().origin.y < kFallLimit) {
     Respawn();
   }
 
   // After moving, so shots leave from where the player now is.
   if (weapon_) {
-    weapon_->Tick(dt, input.fire, reload_pressed);
+    weapon_->Tick(dt, input.fire, reload_pressed, mode);
   }
 }
 
@@ -216,11 +231,7 @@ PlayerState FpsCharacter::CaptureState() const {
   return state;
 }
 
-void FpsCharacter::ApplyState(const PlayerState& state) {
-  bool teleported = !has_state_ || state.respawn_count != respawn_count_;
-  bool shot = has_state_ && state.shot_count != shot_count_;
-  has_state_ = true;
-
+void FpsCharacter::RestoreState(const PlayerState& state) {
   yaw_ = state.yaw;
   pitch_ = state.pitch;
   set_global_transform(
@@ -236,20 +247,45 @@ void FpsCharacter::ApplyState(const PlayerState& state) {
   on_floor_ = state.on_floor;
   prev_input_ = state.prev_input;
   local_velocity_ = get_global_basis().xform_inv(state.velocity);
-  if (teleported) {
-    // Don't draw the body sliding there; look where the server put us.
-    reset_physics_interpolation();
-    prev_landing_offset_ = landing_offset_;
-    look_yaw_ = yaw_;
-    look_pitch_ = pitch_;
-  }
   if (weapon_) {
-    weapon_->ApplyState(state.weapon);
-    // Sustained fire is at most one shot per tick (8 per second at 60
-    // ticks), so one shot's effects cover the change.
-    if (shot) {
-      weapon_->PlayShotEffects(AimTransform());
-    }
+    weapon_->RestoreState(state.weapon);
+  }
+}
+
+void FpsCharacter::ApplyState(const PlayerState& state) {
+  bool teleported = !has_state_ || state.respawn_count != respawn_count_;
+  bool shot = has_state_ && state.shot_count != shot_count_;
+  has_state_ = true;
+  RestoreState(state);
+  if (teleported) {
+    OnTeleported();
+  }
+  // Sustained fire is at most one shot per tick (8 per second at 60
+  // ticks), so one shot's effects cover the change.
+  if (shot && weapon_) {
+    weapon_->PlayShotEffects(AimTransform());
+  }
+}
+
+void FpsCharacter::OnTeleported() {
+  reset_physics_interpolation();
+  prev_landing_offset_ = landing_offset_;
+  correction_offset_ = Vector3();
+  prev_correction_offset_ = Vector3();
+  new_correction_ = Vector3();
+  look_yaw_ = yaw_;
+  look_pitch_ = pitch_;
+}
+
+void FpsCharacter::SmoothCorrection(const Vector3& error) {
+  new_correction_ += error;
+  if ((correction_offset_ + new_correction_).length() >
+      kMaxSmoothedCorrection) {
+    // Too far to ease: snap there.
+    reset_physics_interpolation();
+    correction_offset_ = Vector3();
+    prev_correction_offset_ = Vector3();
+    new_correction_ = Vector3();
   }
 }
 
@@ -267,7 +303,10 @@ void FpsCharacter::_process(double delta) {
       get_physics_process_delta_time());
   // The body is drawn between its last two tick positions; the eye follows
   // it there, turned by the latest look input.
+  float fraction = static_cast<float>(
+      Engine::get_singleton()->get_physics_interpolation_fraction());
   UpdateCamera(get_global_transform_interpolated().origin, landing_offset(),
+               prev_correction_offset_.lerp(correction_offset_, fraction),
                since_tick);
 }
 
@@ -355,8 +394,11 @@ void FpsCharacter::Respawn() {
   look_delta_ = Vector2();
   look_velocity_ = Vector2();
   local_velocity_ = Vector3();
+  correction_offset_ = Vector3();
+  prev_correction_offset_ = Vector3();
+  new_correction_ = Vector3();
   on_floor_ = false;
-  UpdateCamera(get_global_transform().origin, landing_offset_, 0.0f);
+  UpdateCamera(get_global_transform().origin, landing_offset_, Vector3(), 0.0f);
   if (weapon_) {
     weapon_->Refill();
   }
@@ -379,6 +421,7 @@ void FpsCharacter::HoldFire() {
 
 void FpsCharacter::UpdateCamera(const Vector3& origin,
                                 float landing_dip,
+                                const Vector3& correction,
                                 float since_tick) {
   if (!camera_) {
     return;
@@ -393,7 +436,7 @@ void FpsCharacter::UpdateCamera(const Vector3& origin,
   Basis yaw(Vector3(0.0f, 1.0f, 0.0f), look_yaw_);
   camera_->set_global_transform(Transform3D(
       yaw * Basis::from_euler(Vector3(pitch, recoil_yaw_ * decay, 0.0f)),
-      origin +
+      origin + correction +
           yaw.xform(eye_offset_ + Vector3(0.0f, bob + landing_dip, 0.0f))));
 }
 

@@ -98,7 +98,10 @@ void Weapon::_physics_process(double delta) {
   UpdateAimTarget();
 }
 
-void Weapon::Tick(float dt, bool fire, bool reload_pressed) {
+void Weapon::Tick(float dt,
+                  bool fire,
+                  bool reload_pressed,
+                  SimulationMode mode) {
   if (reloading_) {
     reload_timer_ -= dt;
     if (reload_timer_ <= 0.0f) {
@@ -121,7 +124,7 @@ void Weapon::Tick(float dt, bool fire, bool reload_pressed) {
 
   if (!reloading_ && fire_cooldown_ <= 0.0f && fire) {
     if (ammo_ > 0) {
-      Shoot();
+      Fire(mode);
     } else {
       StartReload();
     }
@@ -129,6 +132,10 @@ void Weapon::Tick(float dt, bool fire, bool reload_pressed) {
 }
 
 void Weapon::Shoot() {
+  Fire(SimulationMode::kAuthoritative);
+}
+
+void Weapon::Fire(SimulationMode mode) {
   // Before "fired": the owner's recoil kick is for the next shot.
   Transform3D aim = ShotTransform();
   ammo_--;
@@ -137,6 +144,13 @@ void Weapon::Shoot() {
   fire_cooldown_ += 1.0f / fire_rate_;
   emit_signal("fired");
   emit_signal("ammo_changed", ammo_, reserve_ammo_, reloading_);
+  if (mode == SimulationMode::kReplay) {
+    return;
+  }
+  if (mode == SimulationMode::kPredicted) {
+    PlayShotEffects(aim);
+    return;
+  }
   PlayFireEffects();
 
   Dictionary result = CastRay(aim);
@@ -386,7 +400,7 @@ WeaponState Weapon::CaptureState() const {
   return state;
 }
 
-void Weapon::ApplyState(const WeaponState& state) {
+void Weapon::RestoreState(const WeaponState& state) {
   bool changed = state.ammo != ammo_ || state.reserve_ammo != reserve_ammo_ ||
                  state.reloading != reloading_;
   ammo_ = state.ammo;

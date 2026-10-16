@@ -36,8 +36,12 @@ class FpsCharacter : public CharacterBody3D {
 
   // Advance the game state by one physics tick under the given command:
   // look, movement, recoil and the weapon. Reads nothing else from the
-  // player, so a server can run the commands a client sends.
-  void Simulate(const PlayerInput& command, float dt);
+  // player, so a server can run the commands a client sends. A client
+  // predicts its own player with it too (see SimulationMode); only the
+  // server respawns a player that fell off the map.
+  void Simulate(const PlayerInput& command,
+                float dt,
+                SimulationMode mode = SimulationMode::kAuthoritative);
   // The command from the local devices for this tick.
   PlayerInput GatherInput();
   // Where shots come from: the eye, looking along the simulated aim plus
@@ -45,10 +49,20 @@ class FpsCharacter : public CharacterBody3D {
   // a camera gets the same.
   Transform3D AimTransform() const;
 
-  // The game state, for the server to send. A client applies what it
-  // receives: the body moves there, and a shot plays its effects.
+  // The game state, for the server to send and a client to rewind to.
   PlayerState CaptureState() const;
+  // Set the game state, without effects.
+  void RestoreState(const PlayerState& state);
+  // Restore a state the server sent for another player: the body moves
+  // there, and a shot plays its effects.
   void ApplyState(const PlayerState& state);
+  // After the game state jumped (a respawn, the first state): draw the
+  // body there rather than sliding, and look where it faces.
+  void OnTeleported();
+  // Ease the view across a correction of the predicted position: it is
+  // drawn this far off (old minus new position), shrinking to nothing
+  // over the next ticks. A large one snaps.
+  void SmoothCorrection(const Vector3& error);
 
   // Back to the spawn transform with full ammo and a still camera.
   void Respawn();
@@ -70,6 +84,7 @@ class FpsCharacter : public CharacterBody3D {
   // The first-person camera; null on other players' characters.
   Camera3D* camera() const { return camera_; }
   Weapon* weapon() const { return weapon_; }
+  uint8_t respawn_count() const { return respawn_count_; }
   // On the floor after the last tick.
   bool on_floor() const { return on_floor_; }
   // Look turn rate (x: yaw, y: pitch), in radians per second.
@@ -121,6 +136,10 @@ class FpsCharacter : public CharacterBody3D {
   static constexpr float kMinLandingSpeed = 2.0f;   // m/s
   static constexpr float kMaxLandingSpeed = 12.0f;  // m/s
   static constexpr float kLandingSpring = 16.0f;    // angular frequency, 1/s
+  // A correction of the predicted position eases out at this rate, 1/s;
+  // past kMaxSmoothedCorrection it snaps.
+  static constexpr float kCorrectionRate = 15.0f;
+  static constexpr float kMaxSmoothedCorrection = 1.0f;  // meters
 
   // On ticks, with the body: advance the landing dip's spring.
   // landing_speed is the downward speed of a landing this tick, 0 if none.
@@ -130,12 +149,17 @@ class FpsCharacter : public CharacterBody3D {
   // Place the (top-level) camera at the body's eye, looking along the
   // local look and the recoil (decayed by since_tick seconds past the last
   // tick), moved by the bob and landing_dip.
-  void UpdateCamera(const Vector3& origin, float landing_dip, float since_tick);
+  void UpdateCamera(const Vector3& origin,
+                    float landing_dip,
+                    const Vector3& correction,
+                    float since_tick);
   void OnWeaponFired();
 
   Camera3D* camera_ = nullptr;
   Weapon* weapon_ = nullptr;
   bool local_ = true;
+  // The scene's floor snap length, used when on_floor_.
+  float floor_snap_length_ = 0.0f;
   // Whether ApplyState has run: the first state only places the character.
   bool has_state_ = false;
   // Simulation state, advanced only by Simulate.
@@ -169,6 +193,12 @@ class FpsCharacter : public CharacterBody3D {
   bool fire_held_ = false;
   float step_phase_ = 0.0f;
   float bob_amount_ = 0.0f;
+  // How far off the view is drawn after corrections (SmoothCorrection):
+  // at the last tick, the tick before (for drawing between them, like the
+  // landing dip), and added since the last tick.
+  Vector3 correction_offset_;
+  Vector3 prev_correction_offset_;
+  Vector3 new_correction_;
   // Look rotation applied since the last frame, in radians.
   Vector2 look_delta_;
   Vector2 look_velocity_;

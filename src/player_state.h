@@ -9,6 +9,18 @@
 
 namespace godot {
 
+// How a simulation tick runs.
+enum class SimulationMode {
+  // On the server: the real thing, effects and damage.
+  kAuthoritative,
+  // On a client, its own player's command, the first time: effects, but
+  // damage is the server's.
+  kPredicted,
+  // On a client, a command simulated again after a correction: game state
+  // only.
+  kReplay,
+};
+
 // A Weapon's game state: what Weapon::Tick reads and writes.
 struct WeaponState {
   int ammo = 0;

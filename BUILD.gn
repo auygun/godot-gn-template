@@ -13,6 +13,7 @@ group("default") {
 
 shared_library("extension") {
   sources = [
+    "src/client_prediction.cc",
     "src/fps_character.cc",
     "src/hud.cc",
     "src/impact.cc",

@@ -19,8 +19,11 @@ git submodule update --init --recursive
 godot --headless --recovery-mode --path . --import   # writes .godot/extension_list.cfg
 gn gen out/host                       # release; --args='is_debug=true' for debug
 ninja -C out/host                     # builds godot-cpp + libextension.so
-ninja -C out/host smoke_test          # the only test: headless run, 60 frames
-godot --path .                        # play (-e for the editor)
+ninja -C out/host smoke_test          # the only test: offline + loopback runs
+godot --path .                        # play offline (-e for the editor)
+godot --path . -- --host [port]       # listen server (default port 24680)
+godot --path . -- --join <addr> [port]
+godot --headless --path . -- --server [port]   # dedicated server
 
 # Android, one ABI per out dir (target_cpu: arm64, x64, arm, x86)
 gn gen --args='ndk="/path/to/ndk" target_os="android" target_cpu="arm64"' out/android/release
@@ -28,9 +31,11 @@ ninja -C out/android/release          # .so + app.apk (no_apk=true for just the 
 ```
 
 - There are no unit tests. `smoke_test` (`build/smoke_test.py`) runs the main
-  scene headless and fails on any `ERROR:` line or non-zero exit. It is never
-  up to date, so it always runs. CI (`.github/workflows/ci.yml`) does the
-  import, a Linux release build and `smoke_test`.
+  scene headless offline, then a dedicated server and a client over
+  loopback, and fails on any `ERROR:` line or non-zero exit (or if the
+  client never spawns). It is never up to date, so it always runs. CI
+  (`.github/workflows/ci.yml`) does the import, a Linux release build and
+  `smoke_test`.
 - If `.godot/` is missing (e.g. after `git clean -fdx`), or a `.gdextension`
   file was added or renamed, run the import again. Without
   `extension_list.cfg` the game starts with no C++ classes and the scenes
@@ -86,8 +91,9 @@ ninja -C out/android/release          # .so + app.apk (no_apk=true for just the 
   `_bind_methods` get snake_case names for the engine.
 - Scenes (`scenes/*.tscn`) instantiate the C++ classes by type name.
   Node wiring happens in C++ `_ready()` through `get_node_or_null` by path
-  and `connect` with `callable_mp`. `Main` connects the signals between
-  `Weapon`, `Target` and `Hud`.
+  and `connect` with `callable_mp`. `Main` spawns the players
+  (`player_scene`, at the level's `SpawnPoints`) and connects their weapons
+  to the `Hud`.
 - `FpsCharacter` separates simulation from presentation. Each physics tick,
   `GatherInput()` builds a `PlayerInput` command from the local devices, and
   `Simulate(command, dt)` advances all game state from that command alone
@@ -98,3 +104,28 @@ ninja -C out/android/release          # .so + app.apk (no_apk=true for just the 
   `_process`, drawn between ticks with physics interpolation, which is
   enabled in `project.godot`. Keep new gameplay state on the simulation side
   so a server without devices or a camera could run it.
+
+## Multiplayer (`src/main.cc`, `src/net_protocol.h`)
+
+- Server-authoritative. The mode comes from the user args after `--`
+  (`Main::ParseCommandLine`); offline is a server without the network, so
+  single player runs the server's code. ENet through the SceneTree's
+  `SceneMultiplayer`, with our own binary messages (`send_bytes`,
+  `peer_packet`), not RPCs or `MultiplayerSynchronizer`. Bump
+  `kProtocolVersion` when a message changes.
+- `Main::_physics_process` runs each tick before the players' own. The
+  server calls `Simulate` for every player, with the local player's
+  `GatherInput()` or the client's queued commands (repeating the last when
+  none arrived), then sends each client a snapshot: every player's
+  `PlayerState` (`src/player_state.h`, everything `Simulate` reads or
+  writes), the targets, and the client's last simulated command (`ack`).
+  Hits and kills go to the shooter as reliable events.
+- A client applies the newest snapshot (`FpsCharacter::ApplyState`, which
+  plays a shot's effects when `shot_count` goes up) and sends its last 4
+  commands each tick. It doesn't simulate yet (prediction is phase 2), so
+  only its look is immediate.
+- Characters that aren't the local player's (`set_local(false)`) drop their
+  camera and touch controls, and their weapon stays on the body. Anything
+  new in `Simulate` belongs in `PlayerState` and the snapshot.
+- Physics layer 4 `player`: players don't collide with each other, shots
+  hit them.

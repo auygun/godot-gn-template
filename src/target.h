@@ -20,7 +20,13 @@ class Target : public CharacterBody3D {
   void TakeDamage(float amount, const Vector3& from);
   void Respawn();
 
+  // On a client, the server simulates the target, and the client applies
+  // the position and death it sends.
+  void set_simulated(bool simulated);
+  void ApplyState(const Vector3& position, bool dead);
+
   float health() const { return health_; }
+  bool dead() const { return dead_; }
 
  protected:
   static void _bind_methods();
@@ -36,6 +42,10 @@ class Target : public CharacterBody3D {
   bool dead_ = false;
   float respawn_timer_ = 0.0f;
   Transform3D spawn_transform_;
+
+  // Collision off while dead (it falls through the floor), and back on,
+  // without the bullet holes, on respawn.
+  void SetDead(bool dead);
 };
 
 }  // namespace godot

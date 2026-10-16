@@ -9,6 +9,7 @@
 #include <godot_cpp/core/gdvirtual.gen.inc>
 
 #include "src/player_input.h"
+#include "src/player_state.h"
 
 namespace godot {
 
@@ -27,6 +28,12 @@ class FpsCharacter : public CharacterBody3D {
   void _process(double delta) override;
   void _unhandled_input(const Ref<InputEvent>& event) override;
 
+  // Whether the player at this machine controls this character (the
+  // default). Set before adding it to the tree: other players' characters
+  // drop their camera and touch controls, and take no local input.
+  void set_local(bool local);
+  bool is_local() const { return local_; }
+
   // Advance the game state by one physics tick under the given command:
   // look, movement, recoil and the weapon. Reads nothing else from the
   // player, so a server can run the commands a client sends.
@@ -37,6 +44,11 @@ class FpsCharacter : public CharacterBody3D {
   // recoil. Game state only (no bob or interpolation), so a server without
   // a camera gets the same.
   Transform3D AimTransform() const;
+
+  // The game state, for the server to send. A client applies what it
+  // receives: the body moves there, and a shot plays its effects.
+  PlayerState CaptureState() const;
+  void ApplyState(const PlayerState& state);
 
   // Back to the spawn transform with full ammo and a still camera.
   void Respawn();
@@ -55,6 +67,11 @@ class FpsCharacter : public CharacterBody3D {
   float bob_amount() const { return bob_amount_; }
   // The landing dip as drawn this frame, in meters (negative is down).
   float landing_offset() const;
+  // The first-person camera; null on other players' characters.
+  Camera3D* camera() const { return camera_; }
+  Weapon* weapon() const { return weapon_; }
+  // On the floor after the last tick.
+  bool on_floor() const { return on_floor_; }
   // Look turn rate (x: yaw, y: pitch), in radians per second.
   Vector2 look_velocity() const { return look_velocity_; }
   // Actual velocity in the character's local space.
@@ -118,6 +135,9 @@ class FpsCharacter : public CharacterBody3D {
 
   Camera3D* camera_ = nullptr;
   Weapon* weapon_ = nullptr;
+  bool local_ = true;
+  // Whether ApplyState has run: the first state only places the character.
+  bool has_state_ = false;
   // Simulation state, advanced only by Simulate.
   // The aim from the last command; the body has the yaw.
   float yaw_ = 0.0f;
@@ -126,6 +146,11 @@ class FpsCharacter : public CharacterBody3D {
   float recoil_yaw_ = 0.0f;
   // Shots fired, seeding the recoil's sideways kick.
   uint32_t shot_count_ = 0;
+  // Respawns, wrapping: a client snaps its look when it changes.
+  uint8_t respawn_count_ = 0;
+  // On the floor after the last tick's move. Kept here rather than read
+  // from the body, so it can be sent and restored.
+  bool on_floor_ = false;
   // The last command, to find button presses.
   PlayerInput prev_input_;
   // The eye's position relative to the body, from the scene's camera.

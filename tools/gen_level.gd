@@ -2,7 +2,8 @@ extends SceneTree
 
 # Generates the test level, scenes/levels/test_level.tscn: a blockout of a
 # spawn room (with jump-test blocks), a corridor, and an arena with cover,
-# crates and a raised platform up a flight of stairs. Every piece is a box.
+# crates and a raised platform up a flight of stairs, and the players'
+# spawn points. Every piece is a box.
 # Each area of the level is one StaticBody3D with one mesh (with lightmap
 # UVs, for LightmapGI) and a box collision shape per piece. Deterministic.
 # Needs an editor build of Godot (lightmap_unwrap). Run from the project
@@ -106,6 +107,19 @@ func _init():
 			Vector3(10 - h, 2, -32 - h)], metal)
 	railing("RailingEast", [Vector3(13 + h, 2, -32 - h), Vector3(14 - h, 2, -32 - h)], metal)
 	add_area(root, "Arena")
+
+	# Where players spawn (Main takes them in turn): in the spawn room
+	# facing the door, and around the arena facing its middle. Yaw in
+	# degrees, 0 facing north (-Z).
+	var spawns := Node3D.new()
+	spawns.name = "SpawnPoints"
+	add_owned(root, root, spawns)
+	spawn_point(root, spawns, Vector3(0, 0, 5), 0)
+	spawn_point(root, spawns, Vector3(-11, 0, -38), -135)
+	spawn_point(root, spawns, Vector3(4, 0, 6), 0)
+	spawn_point(root, spawns, Vector3(12, 0, -15), 45)
+	spawn_point(root, spawns, Vector3(-3, 0, 8), 0)
+	spawn_point(root, spawns, Vector3(-12, 0, -15), -45)
 
 	var packed := PackedScene.new()
 	var err := packed.pack(root)
@@ -255,6 +269,13 @@ func add_area(root: Node3D, name: String) -> void:
 		shape.shape = box_shape(p.size)
 		add_owned(root, bodies[p.layer], shape)
 	_pieces.clear()
+
+
+func spawn_point(root: Node, parent: Node, pos: Vector3, yaw_degrees: float) -> void:
+	var marker := Marker3D.new()
+	marker.name = "Spawn%d" % (parent.get_child_count() + 1)
+	marker.transform = Transform3D(Basis(Vector3.UP, deg_to_rad(yaw_degrees)), pos)
+	add_owned(root, parent, marker)
 
 
 func add_owned(root: Node, parent: Node, node: Node) -> void:

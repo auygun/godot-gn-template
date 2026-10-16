@@ -21,6 +21,7 @@ ambient_light_source = 3
 tonemap_mode = 2
 
 [node name="Main" type="Main"]
+player_scene = ExtResource("1_player")
 
 [node name="WorldEnvironment" type="WorldEnvironment" parent="."]
 environment = SubResource("Environment_1")
@@ -32,8 +33,7 @@ shadow_enabled = true
 
 [node name="Level" parent="." instance=ExtResource("4_level")]
 
-[node name="Player" parent="." instance=ExtResource("1_player")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 5)
+[node name="Players" type="Node3D" parent="."]
 
 [node name="Targets" type="Node3D" parent="."]
 

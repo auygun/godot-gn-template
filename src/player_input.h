@@ -1,6 +1,8 @@
 #ifndef SRC_PLAYER_INPUT_H_
 #define SRC_PLAYER_INPUT_H_
 
+#include <cstdint>
+
 #include <godot_cpp/variant/vector2.hpp>
 
 namespace godot {
@@ -19,6 +21,10 @@ struct PlayerInput {
   // Look angles in radians: yaw around +Y, pitch up from the horizon.
   float yaw = 0.0f;
   float pitch = 0.0f;
+  // The respawn the look angles are from (FpsCharacter counts them): the
+  // simulation ignores the look of commands from before the latest
+  // respawn, which would undo the spawn's facing.
+  uint8_t respawn_count = 0;
   bool jump = false;
   bool sprint = false;
   bool fire = false;

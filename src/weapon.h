@@ -9,6 +9,8 @@
 #include <godot_cpp/core/binder_common.hpp>
 #include <godot_cpp/core/gdvirtual.gen.inc>
 
+#include "src/player_state.h"
+
 namespace godot {
 
 class AudioStreamPlayer3D;
@@ -36,6 +38,17 @@ class Weapon : public Node3D {
   // Full magazine and reserve, reload cancelled (respawn).
   void Refill();
 
+  // The camera to follow and aim from (the owner's first-person camera);
+  // null leaves the weapon where the scene put it, on the owner's body.
+  void SetCamera(Camera3D* camera);
+
+  // The game state, for the owner's.
+  WeaponState CaptureState() const;
+  void ApplyState(const WeaponState& state);
+  // A shot from aim that the server simulated: its effects, and an impact
+  // where a ray (cosmetic, against what this machine sees) hits.
+  void PlayShotEffects(const Transform3D& aim);
+
   int ammo() const { return ammo_; }
   int reserve_ammo() const { return reserve_ammo_; }
 
@@ -51,9 +64,9 @@ class Weapon : public Node3D {
  private:
   // Length of the hitscan ray, in meters.
   static constexpr float kRange = 100.0f;
-  // Physics layers shots hit (named in project.godot): world (1) and
-  // shot_only (3), not player_clip (2).
-  static constexpr uint32_t kShotMask = (1u << 0) | (1u << 2);
+  // Physics layers shots hit (named in project.godot): world (1),
+  // shot_only (3) and player (4), not player_clip (2).
+  static constexpr uint32_t kShotMask = (1u << 0) | (1u << 2) | (1u << 3);
   // The barrel aims at the crosshair's hit point, but never closer than
   // this (pressed against a wall it would turn sideways), in meters.
   static constexpr float kMinAimDistance = 2.0f;
@@ -94,9 +107,6 @@ class Weapon : public Node3D {
   // the floor is one mesh.
   static constexpr int kMaxImpactsMobile = 8;
 
-  // The viewport's current camera; null if there is none or the weapon is
-  // outside the tree.
-  Camera3D* ActiveCamera() const;
   // Where shots come from: the owner's aim (game state, the same on a
   // server), or the weapon's own transform without an owner.
   Transform3D ShotTransform() const;
@@ -109,6 +119,8 @@ class Weapon : public Node3D {
   // Follow the camera (keeping the scene's offset from it) and point the
   // barrel at what the crosshair is on.
   void UpdatePose(float dt);
+  // A shot's kick, muzzle flash and sound.
+  void PlayFireEffects();
   void ShowMuzzleFlash();
   void PlayFireSound();
   // Leave an impact on the collider at the hit point, facing along the
@@ -117,9 +129,9 @@ class Weapon : public Node3D {
                    const Vector3& position,
                    const Vector3& normal);
 
+  Camera3D* camera_ = nullptr;
   // The weapon's transform relative to the camera, from the scene.
   Transform3D camera_offset_;
-  bool has_camera_offset_ = false;
   float aim_target_distance_ = kRange;
   float aim_distance_ = kRange;
   float kick_back_ = 0.0f;

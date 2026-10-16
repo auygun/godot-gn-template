@@ -17,6 +17,7 @@ shared_library("extension") {
     "src/hud.cc",
     "src/impact.cc",
     "src/main.cc",
+    "src/net_protocol.cc",
     "src/register_types.cc",
     "src/target.cc",
     "src/touch_controls.cc",

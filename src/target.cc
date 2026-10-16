@@ -53,34 +53,50 @@ void Target::TakeDamage(float amount, const Vector3& from) {
 
   if (health_ <= 0.0f) {
     health_ = 0.0f;
-    dead_ = true;
     respawn_timer_ = kRespawnTime;
 
-    // Pop up, then fall through the floor (collision disabled).
+    // Pop up, then fall through the floor.
     vel = get_velocity();
     vel += Vector3(0.0f, 6.0f, 0.0f);
     set_velocity(vel);
-
-    CollisionShape3D* shape =
-        Object::cast_to<CollisionShape3D>(get_node_or_null("CollisionShape3D"));
-    if (shape) {
-      shape->set_disabled(true);
-    }
+    SetDead(true);
     emit_signal("died");
   }
 }
 
 void Target::Respawn() {
-  dead_ = false;
   health_ = max_health_;
   set_velocity(Vector3());
   set_global_transform(spawn_transform_);
   // A teleport: don't draw the target sliding up from below the floor.
   reset_physics_interpolation();
+  SetDead(false);
+}
+
+void Target::set_simulated(bool simulated) {
+  set_physics_process(simulated);
+}
+
+void Target::ApplyState(const Vector3& position, bool dead) {
+  bool respawned = dead_ && !dead;
+  set_global_position(position);
+  if (respawned) {
+    reset_physics_interpolation();
+  }
+  if (dead != dead_) {
+    SetDead(dead);
+  }
+}
+
+void Target::SetDead(bool dead) {
+  dead_ = dead;
   CollisionShape3D* shape =
       Object::cast_to<CollisionShape3D>(get_node_or_null("CollisionShape3D"));
   if (shape) {
-    shape->set_disabled(false);
+    shape->set_disabled(dead);
+  }
+  if (dead) {
+    return;
   }
   // Come back without the bullet holes.
   for (int i = 0; i < get_child_count(); i++) {

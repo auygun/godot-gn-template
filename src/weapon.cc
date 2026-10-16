@@ -42,16 +42,23 @@ void Weapon::_ready() {
     impact_limit_ = kMaxImpactsMobile;
   }
 
-  Camera3D* camera = ActiveCamera();
-  if (camera) {
-    camera_offset_ = camera->get_global_transform().affine_inverse() *
-                     get_global_transform();
-    has_camera_offset_ = true;
-    // Placed every frame from the camera (see UpdatePose), which isn't
-    // interpolated either.
-    set_as_top_level(true);
-    set_physics_interpolation_mode(PHYSICS_INTERPOLATION_MODE_OFF);
+  // An owner sets the camera from its _ready, which runs after this one.
+  if (!Object::cast_to<FpsCharacter>(get_parent())) {
+    SetCamera(get_viewport()->get_camera_3d());
   }
+}
+
+void Weapon::SetCamera(Camera3D* camera) {
+  camera_ = camera;
+  if (!camera_) {
+    return;
+  }
+  camera_offset_ =
+      camera_->get_global_transform().affine_inverse() * get_global_transform();
+  // Placed every frame from the camera (see UpdatePose), which isn't
+  // interpolated either.
+  set_as_top_level(true);
+  set_physics_interpolation_mode(PHYSICS_INTERPOLATION_MODE_OFF);
 }
 
 void Weapon::_process(double delta) {
@@ -130,12 +137,7 @@ void Weapon::Shoot() {
   fire_cooldown_ += 1.0f / fire_rate_;
   emit_signal("fired");
   emit_signal("ammo_changed", ammo_, reserve_ammo_, reloading_);
-  kick_back_ += kKickBack;
-  kick_pitch_ += kKickPitch;
-  kick_yaw_ +=
-      static_cast<float>(UtilityFunctions::randf_range(-kKickYaw, kKickYaw));
-  ShowMuzzleFlash();
-  PlayFireSound();
+  PlayFireEffects();
 
   Dictionary result = CastRay(aim);
   if (result.has("collider")) {
@@ -144,17 +146,35 @@ void Weapon::Shoot() {
     SpawnImpact(collider, result.get("position", Variant()),
                 result.get("normal", Variant()));
     Target* target = Object::cast_to<Target>(collider);
-    if (target) {
+    if (target && !target->dead()) {
       target->TakeDamage(damage_, aim.origin);
+      if (target->dead()) {
+        emit_signal("killed", target);
+      }
     }
   }
 }
 
-Camera3D* Weapon::ActiveCamera() const {
-  // Null outside the tree: shoot() is bound, so a script can call it on a
-  // weapon that isn't in one.
-  Viewport* viewport = get_viewport();
-  return viewport ? viewport->get_camera_3d() : nullptr;
+void Weapon::PlayShotEffects(const Transform3D& aim) {
+  PlayFireEffects();
+  Dictionary result = CastRay(aim);
+  if (result.has("collider")) {
+    SpawnImpact(result.get("collider", Variant()),
+                result.get("position", Variant()),
+                result.get("normal", Variant()));
+  }
+}
+
+void Weapon::PlayFireEffects() {
+  // The kick only shows (and decays) on a weapon that follows a camera.
+  if (camera_) {
+    kick_back_ += kKickBack;
+    kick_pitch_ += kKickPitch;
+    kick_yaw_ +=
+        static_cast<float>(UtilityFunctions::randf_range(-kKickYaw, kKickYaw));
+  }
+  ShowMuzzleFlash();
+  PlayFireSound();
 }
 
 Transform3D Weapon::ShotTransform() const {
@@ -191,12 +211,11 @@ Dictionary Weapon::CastRay(const Transform3D& aim) {
 }
 
 void Weapon::UpdateAimTarget() {
-  Camera3D* camera = ActiveCamera();
-  if (!camera) {
+  if (!camera_) {
     return;
   }
   // Cosmetic: the barrel points at what the crosshair (the camera) is on.
-  Transform3D camera_xf = camera->get_global_transform();
+  Transform3D camera_xf = camera_->get_global_transform();
   float hit_distance = kRange;
   Dictionary result = CastRay(camera_xf);
   if (result.has("position")) {
@@ -208,11 +227,10 @@ void Weapon::UpdateAimTarget() {
 }
 
 void Weapon::UpdatePose(float dt) {
-  Camera3D* camera = ActiveCamera();
-  if (!camera || !has_camera_offset_) {
+  if (!camera_) {
     return;
   }
-  Transform3D camera_xf = camera->get_global_transform();
+  Transform3D camera_xf = camera_->get_global_transform();
 
   // Bob and sway, from the owner's motion; none without one.
   Vector3 bob;
@@ -297,11 +315,12 @@ void Weapon::PlayFireSound() {
 void Weapon::SpawnImpact(Object* collider,
                          const Vector3& position,
                          const Vector3& normal) {
-  // Areas are invisible; the normal is zero when the ray starts inside a
-  // shape.
+  // Areas are invisible, players don't keep bullet holes, and the normal is
+  // zero when the ray starts inside a shape.
   Node3D* surface = Object::cast_to<Node3D>(collider);
   if (!impact_scene_.is_valid() || !surface ||
-      Object::cast_to<Area3D>(collider) || normal.is_zero_approx()) {
+      Object::cast_to<Area3D>(collider) ||
+      Object::cast_to<FpsCharacter>(collider) || normal.is_zero_approx()) {
     return;
   }
   Node3D* impact = Object::cast_to<Node3D>(impact_scene_->instantiate());
@@ -357,6 +376,29 @@ void Weapon::Refill() {
   emit_signal("ammo_changed", ammo_, reserve_ammo_, reloading_);
 }
 
+WeaponState Weapon::CaptureState() const {
+  WeaponState state;
+  state.ammo = ammo_;
+  state.reserve_ammo = reserve_ammo_;
+  state.reloading = reloading_;
+  state.reload_timer = reload_timer_;
+  state.fire_cooldown = fire_cooldown_;
+  return state;
+}
+
+void Weapon::ApplyState(const WeaponState& state) {
+  bool changed = state.ammo != ammo_ || state.reserve_ammo != reserve_ammo_ ||
+                 state.reloading != reloading_;
+  ammo_ = state.ammo;
+  reserve_ammo_ = state.reserve_ammo;
+  reloading_ = state.reloading;
+  reload_timer_ = state.reload_timer;
+  fire_cooldown_ = state.fire_cooldown;
+  if (changed) {
+    emit_signal("ammo_changed", ammo_, reserve_ammo_, reloading_);
+  }
+}
+
 // static
 void Weapon::_bind_methods() {
   ClassDB::bind_method(D_METHOD("shoot"), &Weapon::Shoot);
@@ -377,6 +419,7 @@ void Weapon::_bind_methods() {
 
   ADD_SIGNAL(MethodInfo("fired"));
   ADD_SIGNAL(MethodInfo("hit", PropertyInfo(Variant::OBJECT, "collider")));
+  ADD_SIGNAL(MethodInfo("killed", PropertyInfo(Variant::OBJECT, "target")));
   ADD_SIGNAL(MethodInfo("ammo_changed", PropertyInfo(Variant::INT, "ammo"),
                         PropertyInfo(Variant::INT, "reserve"),
                         PropertyInfo(Variant::BOOL, "reloading")));

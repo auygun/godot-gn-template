@@ -47,6 +47,10 @@ struct PlayerState {
   // Respawns (wrapping); a client snaps its look when it changes.
   uint8_t respawn_count = 0;
   bool on_floor = false;
+  // Only the server changes these (damage); a dead player's commands do
+  // nothing until it respawns.
+  uint8_t health = 100;
+  bool dead = false;
   // The last command, to find button presses (only the buttons matter).
   PlayerInput prev_input;
   WeaponState weapon;

@@ -166,6 +166,10 @@ void Weapon::Fire(SimulationMode mode) {
         emit_signal("killed", target);
       }
     }
+    FpsCharacter* victim = Object::cast_to<FpsCharacter>(collider);
+    if (victim && victim->TakeDamage(static_cast<int>(damage_))) {
+      emit_signal("killed", victim);
+    }
   }
 }
 
@@ -433,7 +437,8 @@ void Weapon::_bind_methods() {
 
   ADD_SIGNAL(MethodInfo("fired"));
   ADD_SIGNAL(MethodInfo("hit", PropertyInfo(Variant::OBJECT, "collider")));
-  ADD_SIGNAL(MethodInfo("killed", PropertyInfo(Variant::OBJECT, "target")));
+  // A Target or an FpsCharacter.
+  ADD_SIGNAL(MethodInfo("killed", PropertyInfo(Variant::OBJECT, "victim")));
   ADD_SIGNAL(MethodInfo("ammo_changed", PropertyInfo(Variant::INT, "ammo"),
                         PropertyInfo(Variant::INT, "reserve"),
                         PropertyInfo(Variant::BOOL, "reloading")));

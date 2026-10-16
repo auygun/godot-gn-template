@@ -64,8 +64,13 @@ class FpsCharacter : public CharacterBody3D {
   // over the next ticks. A large one snaps.
   void SmoothCorrection(const Vector3& error);
 
-  // Back to the spawn transform with full ammo and a still camera.
+  // Back to the spawn transform (or the one given) with full health and
+  // ammo and a still camera.
   void Respawn();
+  void RespawnAt(const Transform3D& transform);
+  // On the server: lose health from a hit, emitting "damaged". Returns
+  // whether it killed. A dead player takes no damage.
+  bool TakeDamage(int amount);
   // Apply a look delta in pixels (mouse or touch) to the local look. The
   // camera turns on the next frame; the next command carries it to the
   // simulation.
@@ -85,6 +90,8 @@ class FpsCharacter : public CharacterBody3D {
   Camera3D* camera() const { return camera_; }
   Weapon* weapon() const { return weapon_; }
   uint8_t respawn_count() const { return respawn_count_; }
+  int health() const { return health_; }
+  bool dead() const { return dead_; }
   // On the floor after the last tick.
   bool on_floor() const { return on_floor_; }
   // Look turn rate (x: yaw, y: pitch), in radians per second.
@@ -108,6 +115,7 @@ class FpsCharacter : public CharacterBody3D {
   static constexpr float kPitchLimit = 1.55f;  // ~89 degrees
   // Below this height the player has fallen off the map and respawns.
   static constexpr float kFallLimit = -20.0f;
+  static constexpr int kMaxHealth = 100;
   // Eye height when the scene has no Camera3D to take it from (a server).
   static constexpr float kEyeHeight = 1.6f;  // meters
   // Each shot kicks the aim up (and pseudo-randomly sideways, the same on
@@ -154,6 +162,8 @@ class FpsCharacter : public CharacterBody3D {
                     const Vector3& correction,
                     float since_tick);
   void OnWeaponFired();
+  // Show the body and let it collide (and be shot), or not (dead).
+  void SetBodyActive(bool active);
 
   Camera3D* camera_ = nullptr;
   Weapon* weapon_ = nullptr;
@@ -175,6 +185,8 @@ class FpsCharacter : public CharacterBody3D {
   // On the floor after the last tick's move. Kept here rather than read
   // from the body, so it can be sent and restored.
   bool on_floor_ = false;
+  int health_ = kMaxHealth;
+  bool dead_ = false;
   // The last command, to find button presses.
   PlayerInput prev_input_;
   // The eye's position relative to the body, from the scene's camera.

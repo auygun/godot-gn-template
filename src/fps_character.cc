@@ -137,6 +137,12 @@ void FpsCharacter::Simulate(const PlayerInput& command,
     pitch_ = static_cast<float>(
         UtilityFunctions::clampf(input.pitch, -kPitchLimit, kPitchLimit));
   }
+  if (dead_) {
+    // Lying where it died until the server respawns it; what the player
+    // presses meanwhile mustn't count as a press after.
+    prev_input_ = PlayerInput();
+    return;
+  }
   bool jump_pressed = input.jump && !prev_input_.jump;
   bool reload_pressed = input.reload && !prev_input_.reload;
   prev_input_ = input;
@@ -224,6 +230,8 @@ PlayerState FpsCharacter::CaptureState() const {
   state.shot_count = shot_count_;
   state.respawn_count = respawn_count_;
   state.on_floor = on_floor_;
+  state.health = static_cast<uint8_t>(health_);
+  state.dead = dead_;
   state.prev_input = prev_input_;
   if (weapon_) {
     state.weapon = weapon_->CaptureState();
@@ -245,6 +253,11 @@ void FpsCharacter::RestoreState(const PlayerState& state) {
   shot_count_ = state.shot_count;
   respawn_count_ = state.respawn_count;
   on_floor_ = state.on_floor;
+  health_ = state.health;
+  if (state.dead != dead_) {
+    dead_ = state.dead;
+    SetBodyActive(!dead_);
+  }
   prev_input_ = state.prev_input;
   local_velocity_ = get_global_basis().xform_inv(state.velocity);
   if (weapon_) {
@@ -375,8 +388,17 @@ void FpsCharacter::_unhandled_input(const Ref<InputEvent>& event) {
 }
 
 void FpsCharacter::Respawn() {
+  RespawnAt(spawn_transform_);
+}
+
+void FpsCharacter::RespawnAt(const Transform3D& transform) {
   respawn_count_++;
-  set_global_transform(spawn_transform_);
+  health_ = kMaxHealth;
+  if (dead_) {
+    dead_ = false;
+    SetBodyActive(true);
+  }
+  set_global_transform(transform);
   // A teleport: don't draw the body sliding back across the map.
   reset_physics_interpolation();
   set_velocity(Vector3());
@@ -415,6 +437,34 @@ void FpsCharacter::ApplyLookDelta(const Vector2& delta, float sensitivity) {
   look_pitch_ = pitch;
 }
 
+bool FpsCharacter::TakeDamage(int amount) {
+  if (dead_ || amount <= 0) {
+    return false;
+  }
+  health_ -= amount;
+  emit_signal("damaged");
+  if (health_ > 0) {
+    return false;
+  }
+  health_ = 0;
+  dead_ = true;
+  set_velocity(Vector3());
+  SetBodyActive(false);
+  return true;
+}
+
+void FpsCharacter::SetBodyActive(bool active) {
+  // Off the player layer: shots and the living pass through.
+  set_collision_layer_value(4, active);
+  Node3D* mesh = Object::cast_to<Node3D>(get_node_or_null("Mesh"));
+  if (mesh) {
+    mesh->set_visible(active);
+  }
+  if (weapon_) {
+    weapon_->set_visible(active);
+  }
+}
+
 void FpsCharacter::HoldFire() {
   fire_held_ = true;
 }
@@ -444,6 +494,13 @@ void FpsCharacter::UpdateCamera(const Vector3& origin,
 void FpsCharacter::_bind_methods() {
   ClassDB::bind_method(D_METHOD("respawn"), &FpsCharacter::Respawn);
   ClassDB::bind_method(D_METHOD("hold_fire"), &FpsCharacter::HoldFire);
+  ClassDB::bind_method(D_METHOD("get_health"), &FpsCharacter::health);
+  ClassDB::bind_method(D_METHOD("is_dead"), &FpsCharacter::dead);
+
+  ADD_PROPERTY(PropertyInfo(Variant::INT, "health"), "", "get_health");
+
+  // On the server, when a hit takes health.
+  ADD_SIGNAL(MethodInfo("damaged"));
 }
 
 void FpsCharacter::OnWeaponFired() {

@@ -21,6 +21,7 @@ bool Matches(const PlayerState& predicted, const PlayerState& server) {
          predicted.on_floor == server.on_floor &&
          predicted.shot_count == server.shot_count &&
          predicted.respawn_count == server.respawn_count &&
+         predicted.dead == server.dead &&
          predicted.weapon.ammo == server.weapon.ammo &&
          predicted.weapon.reserve_ammo == server.weapon.reserve_ammo &&
          predicted.weapon.reloading == server.weapon.reloading;

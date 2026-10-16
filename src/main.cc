@@ -237,6 +237,11 @@ FpsCharacter* Main::SpawnPlayer(int peer_id, const Transform3D& transform) {
     weapon->connect("killed",
                     callable_mp(this, &Main::OnWeaponKilled).bind(peer_id));
   }
+  if (is_server()) {
+    player->connect("damaged",
+                    callable_mp(this, &Main::OnPlayerDamaged).bind(peer_id));
+    scores_[peer_id] = Score();
+  }
   if (peer_id == local_peer_id_) {
     if (weapon) {
       weapon->connect("ammo_changed", callable_mp(this, &Main::OnAmmoChanged));
@@ -254,6 +259,8 @@ void Main::DespawnPlayer(int peer_id) {
   }
   it->second->queue_free();
   players_.erase(it);
+  scores_.erase(peer_id);
+  respawn_timers_.erase(peer_id);
 }
 
 Transform3D Main::NextSpawnTransform() {
@@ -265,8 +272,48 @@ Transform3D Main::NextSpawnTransform() {
   return point->get_global_transform();
 }
 
+Transform3D Main::SafestSpawnTransform(const FpsCharacter* exclude) {
+  if (spawn_points_.empty()) {
+    return NextSpawnTransform();
+  }
+  // The one whose nearest living player is farthest away.
+  Node3D* best = nullptr;
+  float best_distance = -1.0f;
+  for (Node3D* point : spawn_points_) {
+    Vector3 position = point->get_global_position();
+    float nearest = 1e9f;
+    for (const auto& [peer_id, player] : players_) {
+      if (player != exclude && !player->dead()) {
+        nearest = std::min(nearest, position.distance_squared_to(
+                                        player->get_global_position()));
+      }
+    }
+    if (nearest > best_distance) {
+      best_distance = nearest;
+      best = point;
+    }
+  }
+  return best->get_global_transform();
+}
+
 void Main::ServerTick(float dt) {
   tick_++;
+  // Respawn the dead whose wait is over, before this tick's commands.
+  for (auto it = respawn_timers_.begin(); it != respawn_timers_.end();) {
+    it->second -= dt;
+    auto player = players_.find(it->first);
+    if (player == players_.end()) {
+      it = respawn_timers_.erase(it);
+    } else if (it->second <= 0.0f) {
+      // Unless something else (a script) respawned it meanwhile.
+      if (player->second->dead()) {
+        player->second->RespawnAt(SafestSpawnTransform(player->second));
+      }
+      it = respawn_timers_.erase(it);
+    } else {
+      ++it;
+    }
+  }
   for (auto& [peer_id, player] : players_) {
     if (peer_id == local_peer_id_) {
       player->Simulate(player->GatherInput(), dt);
@@ -293,6 +340,7 @@ void Main::ServerTick(float dt) {
   if (mode_ != Mode::kOffline && tick_ % kSnapshotInterval == 0) {
     SendSnapshots();
   }
+  UpdateHud();
 }
 
 void Main::SendSnapshots() {
@@ -302,7 +350,10 @@ void Main::SendSnapshots() {
   SnapshotMessage snapshot;
   snapshot.tick = tick_;
   for (const auto& [peer_id, player] : players_) {
-    snapshot.players.push_back({peer_id, player->CaptureState()});
+    const Score& score = scores_[peer_id];
+    snapshot.players.push_back({peer_id, player->CaptureState(),
+                                static_cast<uint16_t>(score.kills),
+                                static_cast<uint16_t>(score.deaths)});
   }
   for (Target* target : targets_) {
     snapshot.targets.push_back({target->get_global_position(), target->dead()});
@@ -335,6 +386,8 @@ void Main::ClientTick(float dt) {
     ApplyRemoteState(state);
   }
 
+  UpdateHud();
+
   auto local = players_.find(local_peer_id_);
   if (local == players_.end()) {
     return;
@@ -350,6 +403,10 @@ void Main::ClientTick(float dt) {
 }
 
 void Main::ReconcileLocalPlayer(const SnapshotMessage& snapshot, float dt) {
+  scores_.clear();
+  for (const SnapshotPlayer& entry : snapshot.players) {
+    scores_[entry.peer_id] = {entry.kills, entry.deaths};
+  }
   for (const SnapshotPlayer& entry : snapshot.players) {
     if (entry.peer_id != local_peer_id_) {
       continue;
@@ -572,8 +629,8 @@ void Main::OnEvent(const PackedByteArray& bytes) {
   }
   if (message.type == EventType::kHit) {
     hud_->ShowHitmarker();
-  } else if (message.type == EventType::kKill) {
-    hud_->AddScore(100);
+  } else if (message.type == EventType::kDamaged) {
+    hud_->ShowDamage();
   }
 }
 
@@ -585,12 +642,44 @@ void Main::OnWeaponHit(Object* collider, int64_t peer_id) {
   }
 }
 
-void Main::OnWeaponKilled(Object* target, int64_t peer_id) {
+void Main::OnWeaponKilled(Object* victim, int64_t peer_id) {
+  // Targets are only for practice.
+  FpsCharacter* victim_player = Object::cast_to<FpsCharacter>(victim);
+  if (!victim_player) {
+    return;
+  }
+  int victim_id = 0;
+  for (const auto& [id, player] : players_) {
+    if (player == victim_player) {
+      victim_id = id;
+    }
+  }
+  scores_[static_cast<int>(peer_id)].kills++;
+  scores_[victim_id].deaths++;
+  respawn_timers_[victim_id] = kRespawnDelay;
+  UtilityFunctions::print(
+      vformat("Main: player %d killed player %d", peer_id, victim_id));
   if (peer_id != local_peer_id_) {
     SendEvent(static_cast<int>(peer_id), EventType::kKill);
-  } else if (hud_) {
-    hud_->AddScore(100);
   }
+}
+
+void Main::OnPlayerDamaged(int64_t peer_id) {
+  if (peer_id != local_peer_id_) {
+    SendEvent(static_cast<int>(peer_id), EventType::kDamaged);
+  } else if (hud_) {
+    hud_->ShowDamage();
+  }
+}
+
+void Main::UpdateHud() {
+  auto local = players_.find(local_peer_id_);
+  if (!hud_ || local == players_.end()) {
+    return;
+  }
+  const Score& score = scores_[local_peer_id_];
+  hud_->UpdateStatus(local->second->health(), local->second->dead(),
+                     score.kills, score.deaths);
 }
 
 void Main::OnAmmoChanged(int ammo, int reserve, bool reloading) {

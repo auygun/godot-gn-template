@@ -67,6 +67,8 @@ class Main : public Node {
   static constexpr int kMaxClients = 15;
   // The server sends a snapshot every this many ticks.
   static constexpr uint32_t kSnapshotInterval = 2;
+  // How long a killed player waits to respawn, in seconds.
+  static constexpr float kRespawnDelay = 3.0f;
   // How far ahead of the next command to simulate the server keeps a
   // client's commands.
   static constexpr uint32_t kMaxQueuedCommands = 32;
@@ -101,6 +103,8 @@ class Main : public Node {
   void DespawnPlayer(int peer_id);
   // The next spawn point, round robin.
   Transform3D NextSpawnTransform();
+  // The spawn point farthest from the living players (but for exclude).
+  Transform3D SafestSpawnTransform(const FpsCharacter* exclude);
 
   void ServerTick(float dt);
   void ClientTick(float dt);
@@ -128,7 +132,11 @@ class Main : public Node {
   void OnEvent(const PackedByteArray& bytes);
   // From the players' weapons, bound to the shooter's peer id.
   void OnWeaponHit(Object* collider, int64_t peer_id);
-  void OnWeaponKilled(Object* target, int64_t peer_id);
+  void OnWeaponKilled(Object* victim, int64_t peer_id);
+  // A player lost health (bound to its peer id).
+  void OnPlayerDamaged(int64_t peer_id);
+  // Show the local player's health and score on the HUD.
+  void UpdateHud();
   void OnAmmoChanged(int ammo, int reserve, bool reloading);
 
   bool is_server() const { return mode_ != Mode::kClient; }
@@ -148,10 +156,18 @@ class Main : public Node {
   // The player at this machine (0: none, as on a dedicated server).
   int local_peer_id_ = 0;
   std::map<int, FpsCharacter*> players_;
+  // This match's score, by peer id; the server's, or the last snapshot's.
+  struct Score {
+    int kills = 0;
+    int deaths = 0;
+  };
+  std::map<int, Score> scores_;
 
   // Server.
   std::map<int, ClientConnection> clients_;
   uint32_t tick_ = 0;
+  // Seconds until each dead player respawns, by peer id.
+  std::map<int, float> respawn_timers_;
 
   // Client. The newest snapshot, reconciled on the next tick.
   SnapshotMessage snapshot_;

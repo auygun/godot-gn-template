@@ -19,7 +19,7 @@ namespace godot {
 //
 // Everything is little-endian (every supported platform is), floats raw.
 
-inline constexpr uint8_t kProtocolVersion = 2;
+inline constexpr uint8_t kProtocolVersion = 3;
 inline constexpr int kDefaultPort = 24680;
 
 enum class MessageType : uint8_t {
@@ -55,6 +55,9 @@ struct InputMessage {
 struct SnapshotPlayer {
   int32_t peer_id = 0;
   PlayerState state;
+  // This match's score.
+  uint16_t kills = 0;
+  uint16_t deaths = 0;
 };
 
 struct SnapshotTarget {
@@ -79,8 +82,10 @@ struct SnapshotMessage {
 enum class EventType : uint8_t {
   // The client's player's shot hit something.
   kHit = 1,
-  // ...and killed it.
+  // ...and killed another player.
   kKill = 2,
+  // The client's player was hit.
+  kDamaged = 3,
 };
 
 struct EventMessage {

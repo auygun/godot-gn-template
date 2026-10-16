@@ -14,6 +14,7 @@ enum Flags : uint8_t {
   kReload = 1 << 3,
   kOnFloor = 1 << 4,
   kReloading = 1 << 5,
+  kDead = 1 << 6,
 };
 
 class ByteWriter {
@@ -149,7 +150,9 @@ void WriteState(const PlayerState& state, ByteWriter* writer) {
   writer->U32(state.shot_count);
   writer->U8(state.respawn_count);
   writer->U8(ButtonFlags(state.prev_input) | (state.on_floor ? kOnFloor : 0) |
-             (state.weapon.reloading ? kReloading : 0));
+             (state.weapon.reloading ? kReloading : 0) |
+             (state.dead ? kDead : 0));
+  writer->U8(state.health);
   writer->U16(static_cast<uint16_t>(state.weapon.ammo));
   writer->U16(static_cast<uint16_t>(state.weapon.reserve_ammo));
   writer->Float(state.weapon.reload_timer);
@@ -172,6 +175,8 @@ PlayerState ReadState(ByteReader* reader) {
   SetButtons(flags, &state.prev_input);
   state.on_floor = flags & kOnFloor;
   state.weapon.reloading = flags & kReloading;
+  state.dead = flags & kDead;
+  state.health = reader->U8();
   state.weapon.ammo = reader->U16();
   state.weapon.reserve_ammo = reader->U16();
   state.weapon.reload_timer = reader->Float();
@@ -227,6 +232,8 @@ PackedByteArray EncodeSnapshot(const SnapshotMessage& message) {
   for (const SnapshotPlayer& player : message.players) {
     writer.U32(static_cast<uint32_t>(player.peer_id));
     WriteState(player.state, &writer);
+    writer.U16(player.kills);
+    writer.U16(player.deaths);
   }
   writer.U16(static_cast<uint16_t>(message.targets.size()));
   for (const SnapshotTarget& target : message.targets) {
@@ -250,6 +257,8 @@ bool DecodeSnapshot(const PackedByteArray& bytes, SnapshotMessage* message) {
     SnapshotPlayer player;
     player.peer_id = static_cast<int32_t>(reader.U32());
     player.state = ReadState(&reader);
+    player.kills = reader.U16();
+    player.deaths = reader.U16();
     message->players.push_back(player);
   }
   int target_count = reader.U16();
@@ -275,8 +284,8 @@ PackedByteArray EncodeEvent(const EventMessage& message) {
 bool DecodeEvent(const PackedByteArray& bytes, EventMessage* message) {
   ByteReader reader(bytes, MessageType::kEvent);
   uint8_t type = reader.U8();
-  if (type != static_cast<uint8_t>(EventType::kHit) &&
-      type != static_cast<uint8_t>(EventType::kKill)) {
+  if (type < static_cast<uint8_t>(EventType::kHit) ||
+      type > static_cast<uint8_t>(EventType::kDamaged)) {
     return false;
   }
   message->type = static_cast<EventType>(type);

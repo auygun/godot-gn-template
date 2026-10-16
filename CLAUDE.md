@@ -151,3 +151,10 @@ ninja -C out/android/release          # .so + app.apk (no_apk=true for just the 
   new in `Simulate` belongs in `PlayerState` and the snapshot.
 - Physics layer 4 `player`: players don't collide with each other, shots
   hit them.
+- Deathmatch: a player has 100 health (`PlayerState::health`, `dead`, set
+  only by the server: `FpsCharacter::TakeDamage` from `Weapon` hits). A
+  dead player's commands do nothing and its body is hidden and off the
+  player layer; `Main` counts the kill, and respawns it after
+  `kRespawnDelay` at the spawn point farthest from the living. Scores
+  (`Main::scores_`) go out in every snapshot. Targets are practice only:
+  hit markers, no score.

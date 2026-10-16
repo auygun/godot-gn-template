@@ -290,7 +290,7 @@ void Main::ServerTick(float dt) {
     }
     player->Simulate(connection.last_command, dt);
   }
-  if (mode_ != Mode::kOffline) {
+  if (mode_ != Mode::kOffline && tick_ % kSnapshotInterval == 0) {
     SendSnapshots();
   }
 }
@@ -322,15 +322,24 @@ void Main::SendSnapshots() {
 }
 
 void Main::ClientTick(float dt) {
-  auto local = players_.find(local_peer_id_);
-  FpsCharacter* player = local != players_.end() ? local->second : nullptr;
-  if (snapshot_pending_) {
-    snapshot_pending_ = false;
-    ApplySnapshot(snapshot_, dt);
-  }
-  if (!player) {
+  // Which of the players is ours.
+  if (local_peer_id_ == 0) {
     return;
   }
+  if (snapshot_pending_) {
+    snapshot_pending_ = false;
+    ReconcileLocalPlayer(snapshot_, dt);
+  }
+  SnapshotMessage state;
+  if (interpolator_.Sample(&state)) {
+    ApplyRemoteState(state);
+  }
+
+  auto local = players_.find(local_peer_id_);
+  if (local == players_.end()) {
+    return;
+  }
+  FpsCharacter* player = local->second;
   // Our own player moves now, under the command the server will get.
   PlayerInput command = player->GatherInput();
   if (prediction_.SkipThisTick()) {
@@ -340,14 +349,33 @@ void Main::ClientTick(float dt) {
   SendInput();
 }
 
-void Main::ApplySnapshot(const SnapshotMessage& snapshot, float dt) {
-  // Which of the players is ours.
-  if (local_peer_id_ == 0) {
+void Main::ReconcileLocalPlayer(const SnapshotMessage& snapshot, float dt) {
+  for (const SnapshotPlayer& entry : snapshot.players) {
+    if (entry.peer_id != local_peer_id_) {
+      continue;
+    }
+    auto it = players_.find(local_peer_id_);
+    FpsCharacter* player = it != players_.end() ? it->second : nullptr;
+    if (!player) {
+      player = SpawnPlayer(
+          local_peer_id_,
+          Transform3D(Basis(Vector3(0.0f, 1.0f, 0.0f), entry.state.yaw),
+                      entry.state.position));
+      if (!player) {
+        return;
+      }
+      player->ApplyState(entry.state);
+    }
+    prediction_.Reconcile(player, snapshot.ack, snapshot.input_buffer,
+                          entry.state, dt);
     return;
   }
-  std::set<int> present;
-  for (const SnapshotPlayer& entry : snapshot.players) {
-    if (entry.peer_id <= 0) {
+}
+
+void Main::ApplyRemoteState(const SnapshotMessage& state) {
+  std::set<int> present = {local_peer_id_};
+  for (const SnapshotPlayer& entry : state.players) {
+    if (entry.peer_id <= 0 || entry.peer_id == local_peer_id_) {
       continue;
     }
     present.insert(entry.peer_id);
@@ -361,16 +389,8 @@ void Main::ApplySnapshot(const SnapshotMessage& snapshot, float dt) {
       if (!player) {
         continue;
       }
-      if (entry.peer_id == local_peer_id_) {
-        player->ApplyState(entry.state);
-      }
     }
-    if (entry.peer_id == local_peer_id_) {
-      prediction_.Reconcile(player, snapshot.ack, snapshot.input_buffer,
-                            entry.state, dt);
-    } else {
-      player->ApplyState(entry.state);
-    }
+    player->ApplyState(entry.state);
   }
   std::vector<int> gone;
   for (const auto& [peer_id, player] : players_) {
@@ -382,10 +402,9 @@ void Main::ApplySnapshot(const SnapshotMessage& snapshot, float dt) {
     DespawnPlayer(peer_id);
   }
 
-  size_t count = std::min(targets_.size(), snapshot.targets.size());
+  size_t count = std::min(targets_.size(), state.targets.size());
   for (size_t i = 0; i < count; i++) {
-    targets_[i]->ApplyState(snapshot.targets[i].position,
-                            snapshot.targets[i].dead);
+    targets_[i]->ApplyState(state.targets[i].position, state.targets[i].dead);
   }
 }
 
@@ -535,7 +554,9 @@ void Main::OnSnapshot(const PackedByteArray& bytes) {
   if (!DecodeSnapshot(bytes, &snapshot)) {
     return;
   }
-  // Unreliable: an older one may arrive after a newer.
+  // Unreliable: an older one may arrive after a newer (still in time to
+  // be drawn, but not to correct the prediction).
+  interpolator_.Add(snapshot);
   if (has_snapshot_ && !SequenceNewer(snapshot.tick, snapshot_.tick)) {
     return;
   }

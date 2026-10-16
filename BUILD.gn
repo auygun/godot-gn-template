@@ -20,6 +20,7 @@ shared_library("extension") {
     "src/main.cc",
     "src/net_protocol.cc",
     "src/register_types.cc",
+    "src/snapshot_interpolator.cc",
     "src/target.cc",
     "src/touch_controls.cc",
     "src/weapon.cc",

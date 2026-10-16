@@ -106,7 +106,7 @@ ninja -C out/android/release          # .so + app.apk (no_apk=true for just the 
   enabled in `project.godot`. Keep new gameplay state on the simulation side
   so a server without devices or a camera could run it.
 
-## Multiplayer (`src/main.cc`, `src/client_prediction.cc`, `src/net_protocol.h`)
+## Multiplayer (`src/main.cc`, `src/client_prediction.cc`, `src/snapshot_interpolator.cc`, `src/net_protocol.h`)
 
 - Server-authoritative. The mode comes from the user args after `--`
   (`Main::ParseCommandLine`); offline is a server without the network, so
@@ -117,7 +117,8 @@ ninja -C out/android/release          # .so + app.apk (no_apk=true for just the 
 - `Main::_physics_process` runs each tick before the players' own. The
   server calls `Simulate` for every player, with the local player's
   `GatherInput()` or the client's queued commands (repeating the last when
-  none arrived), then sends each client a snapshot: every player's
+  none arrived). Every `kSnapshotInterval` (2) ticks it sends each client
+  a snapshot: every player's
   `PlayerState` (`src/player_state.h`, everything `Simulate` reads or
   writes), the targets, and the client's last simulated command (`ack`).
   Hits and kills go to the shooter as reliable events.
@@ -127,9 +128,16 @@ ninja -C out/android/release          # .so + app.apk (no_apk=true for just the 
   commands. On a snapshot, if the server's state after the acknowledged
   command differs from the prediction, it restores the server's state and
   replays the unacknowledged commands (`kReplay`: game state only); the
-  camera eases across the difference (`SmoothCorrection`). Other players
-  get the snapshot's state (`FpsCharacter::ApplyState`, which plays a
-  shot's effects when `shot_count` goes up).
+  camera eases across the difference (`SmoothCorrection`). Prediction uses
+  the newest snapshot.
+- Everything else a client shows (other players, targets, joins and
+  leaves) is drawn ~100 ms in the past by `SnapshotInterpolator`: a render
+  clock in server ticks, kept 6 ticks behind the server's estimated time,
+  blends the snapshots around it (positions and look; the rest, like
+  deaths and respawns, from the older one). Other players get that state
+  through `FpsCharacter::ApplyState`, which plays a shot's effects when
+  `shot_count` goes up. So a client's predicted shots and the targets it
+  sees are ~100 ms apart until lag compensation (phase 5).
 - The server simulates each client's commands by sequence number, one per
   tick; a missing one is replaced by repeating the last, and dropped if it
   comes later. Snapshots report how early the client's commands arrive

@@ -16,6 +16,7 @@
 #include "src/client_prediction.h"
 #include "src/net_protocol.h"
 #include "src/player_input.h"
+#include "src/snapshot_interpolator.h"
 
 namespace godot {
 
@@ -64,6 +65,8 @@ class Main : public Node {
   // machine).
   static constexpr int kServerPeerId = 1;
   static constexpr int kMaxClients = 15;
+  // The server sends a snapshot every this many ticks.
+  static constexpr uint32_t kSnapshotInterval = 2;
   // How far ahead of the next command to simulate the server keeps a
   // client's commands.
   static constexpr uint32_t kMaxQueuedCommands = 32;
@@ -102,7 +105,10 @@ class Main : public Node {
   void ServerTick(float dt);
   void ClientTick(float dt);
   void SendSnapshots();
-  void ApplySnapshot(const SnapshotMessage& snapshot, float dt);
+  // The newest snapshot, for our own player's prediction.
+  void ReconcileLocalPlayer(const SnapshotMessage& snapshot, float dt);
+  // A state drawn from the snapshots: everyone else, and the targets.
+  void ApplyRemoteState(const SnapshotMessage& state);
   void SendInput();
   void SendEvent(int peer_id, EventType type);
   // send_bytes through the simulated lag and loss.
@@ -147,11 +153,12 @@ class Main : public Node {
   std::map<int, ClientConnection> clients_;
   uint32_t tick_ = 0;
 
-  // Client. The newest snapshot, applied on the next tick.
+  // Client. The newest snapshot, reconciled on the next tick.
   SnapshotMessage snapshot_;
   bool has_snapshot_ = false;
   bool snapshot_pending_ = false;
   ClientPrediction prediction_;
+  SnapshotInterpolator interpolator_;
 
   // Simulated network conditions.
   struct DelayedPacket {

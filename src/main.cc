@@ -4,6 +4,7 @@
 #include <set>
 #include <utility>
 
+#include <godot_cpp/classes/e_net_connection.hpp>
 #include <godot_cpp/classes/e_net_multiplayer_peer.hpp>
 #include <godot_cpp/classes/engine.hpp>
 #include <godot_cpp/classes/multiplayer_peer.hpp>
@@ -22,6 +23,10 @@
 namespace godot {
 
 namespace {
+
+// ENet's packet compression; the same on every side (not negotiated).
+constexpr ENetConnection::CompressionMode kCompressionMode =
+    ENetConnection::COMPRESS_RANGE_CODER;
 
 // A port argument: 1..65535, or 0 if it isn't one.
 int ParsePort(const String& arg) {
@@ -71,7 +76,7 @@ void Main::_ready() {
   if (!ParseCommandLine()) {
     UtilityFunctions::push_error(
         "Usage: -- [--host [port] | --server [port] | --join <address> "
-        "[port]] [--lag <ms>] [--loss <percent>]");
+        "[port]] [--lag <ms>] [--loss <percent>] [--netstats]");
     get_tree()->quit(1);
     return;
   }
@@ -118,6 +123,11 @@ bool Main::ParseCommandLine() {
     i++;
   }
   while (i < args.size()) {
+    if (args[i] == "--netstats") {
+      net_stats_ = true;
+      i++;
+      continue;
+    }
     if (i + 1 >= args.size() || !args[i + 1].is_valid_int()) {
       return false;
     }
@@ -160,6 +170,9 @@ bool Main::StartNetwork() {
                 port_, UtilityFunctions::error_string(err)));
     return false;
   }
+  // Every packet compressed on its own (they're unreliable, so each must
+  // decode alone). Both sides must use the same mode.
+  peer->get_host()->compress(kCompressionMode);
   multiplayer_->set_multiplayer_peer(peer);
   // Clients only talk to the server.
   multiplayer_->set_server_relay_enabled(false);
@@ -215,6 +228,40 @@ void Main::_physics_process(double delta) {
     ServerTick(static_cast<float>(delta));
   }
   FlushDelayedPackets();
+  PrintNetStats(static_cast<float>(delta));
+}
+
+void Main::PrintNetStats(float dt) {
+  if (!net_stats_ || !multiplayer_.is_valid()) {
+    return;
+  }
+  Ref<ENetMultiplayerPeer> peer = multiplayer_->get_multiplayer_peer();
+  if (peer.is_null() || peer->get_host().is_null()) {
+    return;
+  }
+  Ref<ENetConnection> host = peer->get_host();
+  net_stats_sent_ += static_cast<uint64_t>(
+      host->pop_statistic(ENetConnection::HOST_TOTAL_SENT_DATA));
+  net_stats_received_ += static_cast<uint64_t>(
+      host->pop_statistic(ENetConnection::HOST_TOTAL_RECEIVED_DATA));
+  net_stats_packets_ += static_cast<uint64_t>(
+      host->pop_statistic(ENetConnection::HOST_TOTAL_SENT_PACKETS));
+  net_stats_timer_ += dt;
+  if (net_stats_timer_ < kNetStatsInterval) {
+    return;
+  }
+  // kbit/s; packets include ENet's acks and pings.
+  double seconds = net_stats_timer_;
+  UtilityFunctions::print(vformat(
+      "Main: netstats up %.1f kbit/s, down %.1f kbit/s, %.0f packets/s up, "
+      "%d peers",
+      net_stats_sent_ * 8.0 / 1000.0 / seconds,
+      net_stats_received_ * 8.0 / 1000.0 / seconds,
+      net_stats_packets_ / seconds, static_cast<int>(clients_.size())));
+  net_stats_timer_ = 0.0f;
+  net_stats_sent_ = 0;
+  net_stats_received_ = 0;
+  net_stats_packets_ = 0;
 }
 
 FpsCharacter* Main::SpawnPlayer(int peer_id, const Transform3D& transform) {
@@ -404,18 +451,27 @@ void Main::SendSnapshots() {
   if (clients_.empty()) {
     return;
   }
+  // The world, as every client will see it (quantized), kept for the
+  // deltas against it.
   SnapshotMessage snapshot;
   snapshot.tick = tick_;
   for (const auto& [peer_id, player] : players_) {
     const Score& score = scores_[peer_id];
-    snapshot.players.push_back({peer_id, player->CaptureState(),
-                                static_cast<uint16_t>(score.kills),
-                                static_cast<uint16_t>(score.deaths)});
+    SnapshotPlayer entry;
+    entry.peer_id = peer_id;
+    entry.state = player->CaptureState();
+    entry.kills = static_cast<uint16_t>(score.kills);
+    entry.deaths = static_cast<uint16_t>(score.deaths);
+    snapshot.players.push_back(entry);
   }
   for (Target* target : targets_) {
     snapshot.targets.push_back({target->get_global_position(), target->dead()});
   }
+  QuantizeSnapshot(&snapshot);
+  KeepSnapshot(snapshot);
+
   for (const auto& [peer_id, connection] : clients_) {
+    snapshot.local_peer_id = peer_id;
     snapshot.ack = connection.last_simulated;
     // How far the client's commands arrive ahead of when they're
     // simulated.
@@ -424,9 +480,80 @@ void Main::SendSnapshots() {
                          : static_cast<int32_t>(connection.last_received -
                                                 connection.last_simulated);
     snapshot.input_buffer = static_cast<int8_t>(std::clamp(buffer, -127, 127));
-    Send(EncodeSnapshot(snapshot), peer_id,
-         MultiplayerPeer::TRANSFER_MODE_UNRELIABLE);
+    // Against the newest snapshot the client has; all of it if that's no
+    // longer kept.
+    const SnapshotMessage* baseline =
+        connection.snapshot_ack ? FindSnapshot(connection.snapshot_ack)
+                                : nullptr;
+    PackedByteArray bytes = EncodeSnapshot(snapshot, baseline);
+#ifdef DEBUG_ENABLED
+    CheckSnapshotEncoding(bytes, snapshot, baseline);
+#endif
+    Send(bytes, peer_id, MultiplayerPeer::TRANSFER_MODE_UNRELIABLE);
   }
+}
+
+#ifdef DEBUG_ENABLED
+void Main::CheckSnapshotEncoding(const PackedByteArray& bytes,
+                                 const SnapshotMessage& snapshot,
+                                 const SnapshotMessage* baseline) {
+  // What the client will decode: the full state of its own player, the
+  // quantized view of the rest, exactly. A client's baseline is what it
+  // decoded, which matches the server's kept snapshot in the fields it
+  // uses (checked here each time).
+  SnapshotMessage decoded;
+  bool ok = DecodeSnapshot(bytes, baseline, &decoded) &&
+            decoded.tick == snapshot.tick &&
+            decoded.local_peer_id == snapshot.local_peer_id &&
+            decoded.ack == snapshot.ack &&
+            decoded.input_buffer == snapshot.input_buffer &&
+            decoded.players.size() == snapshot.players.size() &&
+            decoded.targets == snapshot.targets;
+  for (size_t i = 0; ok && i < snapshot.players.size(); i++) {
+    const SnapshotPlayer& want = snapshot.players[i];
+    const SnapshotPlayer& got = decoded.players[i];
+    ok = got.peer_id == want.peer_id && got.remote == want.remote &&
+         got.kills == want.kills && got.deaths == want.deaths;
+    if (ok && want.peer_id == snapshot.local_peer_id) {
+      const PlayerState& a = got.state;
+      const PlayerState& b = want.state;
+      ok = a.position == b.position && a.velocity == b.velocity &&
+           a.yaw == b.yaw && a.pitch == b.pitch && a.recoil == b.recoil &&
+           a.recoil_yaw == b.recoil_yaw &&
+           a.landing_offset == b.landing_offset &&
+           a.landing_velocity == b.landing_velocity &&
+           a.shot_count == b.shot_count && a.respawn_count == b.respawn_count &&
+           a.on_floor == b.on_floor && a.health == b.health &&
+           a.dead == b.dead && a.prev_input.jump == b.prev_input.jump &&
+           a.prev_input.sprint == b.prev_input.sprint &&
+           a.prev_input.fire == b.prev_input.fire &&
+           a.prev_input.reload == b.prev_input.reload &&
+           a.weapon.ammo == b.weapon.ammo &&
+           a.weapon.reserve_ammo == b.weapon.reserve_ammo &&
+           a.weapon.reloading == b.weapon.reloading &&
+           a.weapon.reload_timer == b.weapon.reload_timer &&
+           a.weapon.fire_cooldown == b.weapon.fire_cooldown;
+    }
+  }
+  if (!ok) {
+    UtilityFunctions::push_error(vformat(
+        "Main: snapshot %d for peer %d doesn't decode to what was encoded "
+        "(baseline %d)",
+        snapshot.tick, snapshot.local_peer_id, baseline ? baseline->tick : 0));
+  }
+}
+#endif
+
+const SnapshotMessage* Main::FindSnapshot(uint32_t tick) const {
+  // Snapshots come every kSnapshotInterval ticks.
+  const SnapshotMessage& snapshot =
+      snapshot_history_[(tick / kSnapshotInterval) % kSnapshotHistory];
+  return tick != 0 && snapshot.tick == tick ? &snapshot : nullptr;
+}
+
+void Main::KeepSnapshot(const SnapshotMessage& snapshot) {
+  snapshot_history_[(snapshot.tick / kSnapshotInterval) % kSnapshotHistory] =
+      snapshot;
 }
 
 void Main::ClientTick(float dt) {
@@ -453,6 +580,8 @@ void Main::ClientTick(float dt) {
   // Our own player moves now, under the command the server will get.
   PlayerInput command = player->GatherInput();
   command.view_tick = interpolator_.render_tick();
+  // As the server will decode it, so both simulate the same.
+  command = QuantizeCommand(command);
   if (prediction_.SkipThisTick()) {
     return;
   }
@@ -524,7 +653,9 @@ void Main::ApplyRemoteState(const SnapshotMessage& state) {
 }
 
 void Main::SendInput() {
-  Send(EncodeInput(prediction_.MakeInputMessage()), kServerPeerId,
+  InputMessage message = prediction_.MakeInputMessage();
+  message.snapshot_ack = has_snapshot_ ? snapshot_.tick : 0;
+  Send(EncodeInput(message), kServerPeerId,
        MultiplayerPeer::TRANSFER_MODE_UNRELIABLE);
 }
 
@@ -653,6 +784,14 @@ void Main::OnInput(int peer_id, const PackedByteArray& bytes) {
   if (SequenceNewer(message.sequence, connection.last_received)) {
     connection.last_received = message.sequence;
   }
+  // Only forward: an input packet arriving late mustn't make the server
+  // encode against a snapshot older than one the client has dropped.
+  if (message.snapshot_ack != 0 &&
+      (connection.snapshot_ack == 0 ||
+       SequenceNewer(message.snapshot_ack, connection.snapshot_ack)) &&
+      !SequenceNewer(message.snapshot_ack, tick_)) {
+    connection.snapshot_ack = message.snapshot_ack;
+  }
   for (uint32_t i = 0; i < count; i++) {
     uint32_t sequence = message.sequence - (count - 1 - i);
     // Not ones simulated already (or repeated in their place), nor far
@@ -665,10 +804,25 @@ void Main::OnInput(int peer_id, const PackedByteArray& bytes) {
 }
 
 void Main::OnSnapshot(const PackedByteArray& bytes) {
-  SnapshotMessage snapshot;
-  if (!DecodeSnapshot(bytes, &snapshot)) {
+  uint32_t baseline_tick = 0;
+  if (!PeekSnapshotBaseline(bytes, &baseline_tick)) {
     return;
   }
+  // Encoded against a snapshot we no longer have (or never had): drop it;
+  // our acks move the server on to one we have.
+  const SnapshotMessage* baseline = nullptr;
+  if (baseline_tick != 0) {
+    baseline = FindSnapshot(baseline_tick);
+    if (!baseline) {
+      return;
+    }
+  }
+  SnapshotMessage snapshot;
+  if (!DecodeSnapshot(bytes, baseline, &snapshot) ||
+      snapshot.local_peer_id != local_peer_id_ || snapshot.tick == 0) {
+    return;
+  }
+  KeepSnapshot(snapshot);
   // Unreliable: an older one may arrive after a newer (still in time to
   // be drawn, but not to correct the prediction).
   interpolator_.Add(snapshot);

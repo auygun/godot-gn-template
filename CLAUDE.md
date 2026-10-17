@@ -24,7 +24,8 @@ godot --path .                        # play offline (-e for the editor)
 godot --path . -- --host [port]       # listen server (default port 24680)
 godot --path . -- --join <addr> [port]
 godot --headless --path . -- --server [port]   # dedicated server
-# ... --lag <ms> --loss <percent> after the mode simulates a bad network
+# ... --lag <ms> --loss <percent> after the mode simulates a bad network,
+# --netstats prints the traffic (kbit/s after compression) every 5 s
 
 # Android, one ABI per out dir (target_cpu: arm64, x64, arm, x86)
 gn gen --args='ndk="/path/to/ndk" target_os="android" target_cpu="arm64"' out/android/release
@@ -113,7 +114,19 @@ ninja -C out/android/release          # .so + app.apk (no_apk=true for just the 
   single player runs the server's code. ENet through the SceneTree's
   `SceneMultiplayer`, with our own binary messages (`send_bytes`,
   `peer_packet`), not RPCs or `MultiplayerSynchronizer`. Bump
-  `kProtocolVersion` when a message changes.
+  `kProtocolVersion` when a message changes. ENet compresses every packet
+  (range coder; both sides must use the same mode).
+- Wire format (`net_protocol.cc`): what is only drawn is quantized
+  (positions to 2 mm, angles to 16 bits); what feeds prediction is exact
+  (the client's own player's full state) or quantized before the client
+  uses it (`QuantizeCommand`), so both sides compute with the same values.
+  Snapshots are per client: its own player's `PlayerState`, everyone
+  else's `RemoteView` (position, look, flags, counter low bytes, score).
+  They're delta encoded against the newest snapshot the client acked
+  (`InputMessage::snapshot_ack`; both sides keep the last 32), with
+  per-entry change masks; without a usable baseline the snapshot is full,
+  and a client drops one whose baseline it lacks. Debug builds decode
+  every snapshot they encode and compare (`CheckSnapshotEncoding`).
 - `Main::_physics_process` runs each tick before the players' own. The
   server calls `Simulate` for every player, with the local player's
   `GatherInput()` or the client's queued commands (repeating the last when

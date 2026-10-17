@@ -1,6 +1,7 @@
 #ifndef SRC_MAIN_H_
 #define SRC_MAIN_H_
 
+#include <array>
 #include <cstdint>
 #include <deque>
 #include <map>
@@ -40,7 +41,8 @@ class Target;
 //   --server [port]         dedicated server, no local player (--headless)
 //   --join <address> [port] client
 //
-// followed by --lag <ms> and --loss <percent> to simulate a bad network.
+// followed by --lag <ms> and --loss <percent> to simulate a bad network,
+// and --netstats to print the traffic every few seconds.
 class Main : public Node, public ShotResolver {
   GDCLASS(Main, Node);
 
@@ -104,6 +106,9 @@ class Main : public Node, public ShotResolver {
     uint32_t next_sequence = 0;
     // The newest sequence number received.
     uint32_t last_received = 0;
+    // The newest snapshot the client has decoded (0: none), the baseline
+    // for the next.
+    uint32_t snapshot_ack = 0;
     // The last sequence number simulated (0: none), and its command.
     uint32_t last_simulated = 0;
     PlayerInput last_command;
@@ -182,6 +187,20 @@ class Main : public Node, public ShotResolver {
   };
   std::map<int, Score> scores_;
 
+  // The snapshots kept as baselines (each side its own): a second's worth
+  // at 30 per second.
+  static constexpr size_t kSnapshotHistory = 32;
+  // The kept snapshot of tick, or null.
+  const SnapshotMessage* FindSnapshot(uint32_t tick) const;
+#ifdef DEBUG_ENABLED
+  // Debug builds: decode what was just encoded and compare.
+  void CheckSnapshotEncoding(const PackedByteArray& bytes,
+                             const SnapshotMessage& snapshot,
+                             const SnapshotMessage* baseline);
+#endif
+  void KeepSnapshot(const SnapshotMessage& snapshot);
+  std::array<SnapshotMessage, kSnapshotHistory> snapshot_history_;
+
   // Server.
   std::map<int, ClientConnection> clients_;
   uint32_t tick_ = 0;
@@ -206,6 +225,16 @@ class Main : public Node, public ShotResolver {
   };
   int lag_ms_ = 0;
   int loss_percent_ = 0;
+
+  // --netstats: print ENet's traffic counters (after compression) every
+  // kNetStatsInterval seconds.
+  static constexpr float kNetStatsInterval = 5.0f;
+  void PrintNetStats(float dt);
+  bool net_stats_ = false;
+  float net_stats_timer_ = 0.0f;
+  uint64_t net_stats_sent_ = 0;
+  uint64_t net_stats_received_ = 0;
+  uint64_t net_stats_packets_ = 0;
   std::deque<DelayedPacket> delayed_packets_;
 };
 

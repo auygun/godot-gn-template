@@ -27,6 +27,11 @@ class SnapshotInterpolator {
   // positions and look blended between the snapshots around it, the rest
   // from the older one. False until there is a snapshot.
   bool Sample(SnapshotMessage* out);
+  // The server tick drawn (fractional), as of the last Sample; 0 before
+  // the first.
+  double render_tick() const {
+    return started_ ? static_cast<double>(base_tick_) + render_time_ : 0.0;
+  }
 
  private:
   // How far in the past to draw: 100 ms at 60 ticks, three snapshots at

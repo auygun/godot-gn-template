@@ -14,9 +14,11 @@
 #include <godot_cpp/core/gdvirtual.gen.inc>
 
 #include "src/client_prediction.h"
+#include "src/lag_compensation.h"
 #include "src/net_protocol.h"
 #include "src/player_input.h"
 #include "src/snapshot_interpolator.h"
+#include "src/weapon.h"
 
 namespace godot {
 
@@ -39,7 +41,7 @@ class Target;
 //   --join <address> [port] client
 //
 // followed by --lag <ms> and --loss <percent> to simulate a bad network.
-class Main : public Node {
+class Main : public Node, public ShotResolver {
   GDCLASS(Main, Node);
 
  public:
@@ -55,6 +57,17 @@ class Main : public Node {
   }
   Ref<PackedScene> player_scene() const { return player_scene_; }
 
+  // ShotResolver, on the server: shots are tested against the players and
+  // targets as the shooter saw them.
+  TypedArray<RID> ShootableBodies() override;
+  Node3D* ResolveShot(const Node3D* shooter,
+                      double view_tick,
+                      const Vector3& origin,
+                      const Vector3& direction,
+                      float max_distance,
+                      Vector3* position,
+                      Vector3* normal) override;
+
  protected:
   static void _bind_methods();
 
@@ -69,6 +82,10 @@ class Main : public Node {
   static constexpr uint32_t kSnapshotInterval = 2;
   // How long a killed player waits to respawn, in seconds.
   static constexpr float kRespawnDelay = 3.0f;
+  // How far in the past a client's shots may be tested, in ticks: its
+  // view's delay (SnapshotInterpolator) plus up to 200 ms of latency. A
+  // client with more lag has to lead its targets.
+  static constexpr double kMaxRewindTicks = 6.0 + 12.0;
   // How far ahead of the next command to simulate the server keeps a
   // client's commands.
   static constexpr uint32_t kMaxQueuedCommands = 32;
@@ -108,6 +125,8 @@ class Main : public Node {
 
   void ServerTick(float dt);
   void ClientTick(float dt);
+  // Remember where the shootable bodies are this tick (LagCompensation).
+  void RecordHitboxes();
   void SendSnapshots();
   // The newest snapshot, for our own player's prediction.
   void ReconcileLocalPlayer(const SnapshotMessage& snapshot, float dt);
@@ -168,6 +187,7 @@ class Main : public Node {
   uint32_t tick_ = 0;
   // Seconds until each dead player respawns, by peer id.
   std::map<int, float> respawn_timers_;
+  LagCompensation lag_compensation_;
 
   // Client. The newest snapshot, reconciled on the next tick.
   SnapshotMessage snapshot_;

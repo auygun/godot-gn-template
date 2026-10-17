@@ -1,5 +1,6 @@
 #include "src/net_protocol.h"
 
+#include <cmath>
 #include <cstring>
 
 namespace godot {
@@ -124,6 +125,10 @@ void WriteCommand(const PlayerInput& command, ByteWriter* writer) {
   writer->Float(command.yaw);
   writer->Float(command.pitch);
   writer->U8(command.respawn_count);
+  // Whole ticks and 1/256ths.
+  double whole = std::floor(command.view_tick);
+  writer->U32(static_cast<uint32_t>(static_cast<int64_t>(whole)));
+  writer->U8(static_cast<uint8_t>((command.view_tick - whole) * 256.0));
   writer->U8(ButtonFlags(command));
 }
 
@@ -134,6 +139,8 @@ PlayerInput ReadCommand(ByteReader* reader) {
   command.yaw = reader->Float();
   command.pitch = reader->Float();
   command.respawn_count = reader->U8();
+  uint32_t whole = reader->U32();
+  command.view_tick = whole + reader->U8() / 256.0;
   SetButtons(reader->U8(), &command);
   return command;
 }

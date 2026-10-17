@@ -17,6 +17,7 @@ shared_library("extension") {
     "src/fps_character.cc",
     "src/hud.cc",
     "src/impact.cc",
+    "src/lag_compensation.cc",
     "src/main.cc",
     "src/net_protocol.cc",
     "src/register_types.cc",

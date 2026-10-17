@@ -19,7 +19,7 @@ namespace godot {
 //
 // Everything is little-endian (every supported platform is), floats raw.
 
-inline constexpr uint8_t kProtocolVersion = 3;
+inline constexpr uint8_t kProtocolVersion = 4;
 inline constexpr int kDefaultPort = 24680;
 
 enum class MessageType : uint8_t {

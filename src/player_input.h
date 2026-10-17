@@ -25,6 +25,11 @@ struct PlayerInput {
   // simulation ignores the look of commands from before the latest
   // respawn, which would undo the spawn's facing.
   uint8_t respawn_count = 0;
+  // The server tick the client was drawing everything else at when it made
+  // the command (fractional, SnapshotInterpolator's render clock): a shot
+  // is tested against the bodies as they were then (LagCompensation).
+  // Offline and on a listen server's own player: the tick itself.
+  double view_tick = 0.0;
   bool jump = false;
   bool sprint = false;
   bool fire = false;

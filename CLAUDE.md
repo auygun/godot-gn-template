@@ -106,7 +106,7 @@ ninja -C out/android/release          # .so + app.apk (no_apk=true for just the 
   enabled in `project.godot`. Keep new gameplay state on the simulation side
   so a server without devices or a camera could run it.
 
-## Multiplayer (`src/main.cc`, `src/client_prediction.cc`, `src/snapshot_interpolator.cc`, `src/net_protocol.h`)
+## Multiplayer (`src/main.cc`, `src/client_prediction.cc`, `src/snapshot_interpolator.cc`, `src/lag_compensation.cc`, `src/net_protocol.h`)
 
 - Server-authoritative. The mode comes from the user args after `--`
   (`Main::ParseCommandLine`); offline is a server without the network, so
@@ -136,8 +136,16 @@ ninja -C out/android/release          # .so + app.apk (no_apk=true for just the 
   blends the snapshots around it (positions and look; the rest, like
   deaths and respawns, from the older one). Other players get that state
   through `FpsCharacter::ApplyState`, which plays a shot's effects when
-  `shot_count` goes up. So a client's predicted shots and the targets it
-  sees are ~100 ms apart until lag compensation (phase 5).
+  `shot_count` goes up.
+- Lag compensation: each command carries the server tick the client was
+  drawing (`PlayerInput::view_tick`, the render clock), and the server
+  tests that command's shots against the players and targets as they were
+  then (at most `kMaxRewindTicks` back). Moved bodies don't show in
+  physics queries until the next physics step, so `LagCompensation` keeps
+  each tick's hitboxes (from the bodies' `CollisionShape3D`: capsules and
+  boxes) and tests rays against them in plain math. `Main` is the
+  weapons' `ShotResolver`: the physics ray finds the level (passing
+  through the bodies), the history the bodies, and the nearer wins.
 - The server simulates each client's commands by sequence number, one per
   tick; a missing one is replaced by repeating the last, and dropped if it
   comes later. Snapshots report how early the client's commands arrive

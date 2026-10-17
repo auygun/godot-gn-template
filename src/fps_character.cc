@@ -137,6 +137,7 @@ void FpsCharacter::Simulate(const PlayerInput& command,
     pitch_ = static_cast<float>(
         UtilityFunctions::clampf(input.pitch, -kPitchLimit, kPitchLimit));
   }
+  view_tick_ = input.view_tick;
   if (dead_) {
     // Lying where it died until the server respawns it; what the player
     // presses meanwhile mustn't count as a press after.

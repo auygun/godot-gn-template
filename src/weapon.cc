@@ -153,12 +153,12 @@ void Weapon::Fire(SimulationMode mode) {
   }
   PlayFireEffects();
 
-  Dictionary result = CastRay(aim);
-  if (result.has("collider")) {
-    Object* collider = result.get("collider", Variant());
+  Vector3 position;
+  Vector3 normal;
+  Object* collider = ResolveHit(aim, &position, &normal);
+  if (collider) {
     emit_signal("hit", collider);
-    SpawnImpact(collider, result.get("position", Variant()),
-                result.get("normal", Variant()));
+    SpawnImpact(collider, position, normal);
     Target* target = Object::cast_to<Target>(collider);
     if (target && !target->dead()) {
       target->TakeDamage(damage_, aim.origin);
@@ -201,7 +201,41 @@ Transform3D Weapon::ShotTransform() const {
                          : get_global_transform();
 }
 
-Dictionary Weapon::CastRay(const Transform3D& aim) {
+Object* Weapon::ResolveHit(const Transform3D& aim,
+                           Vector3* position,
+                           Vector3* normal) {
+  TypedArray<RID> exclude;
+  if (shot_resolver_) {
+    exclude = shot_resolver_->ShootableBodies();
+  }
+  Dictionary result = CastRay(aim, exclude);
+  Object* collider = nullptr;
+  float distance = kRange;
+  if (result.has("collider")) {
+    collider = result.get("collider", Variant());
+    *position = result.get("position", Variant());
+    *normal = result.get("normal", Variant());
+    distance = aim.origin.distance_to(*position);
+  }
+  if (shot_resolver_) {
+    FpsCharacter* owner_character = Object::cast_to<FpsCharacter>(get_parent());
+    Vector3 body_position;
+    Vector3 body_normal;
+    Node3D* body = shot_resolver_->ResolveShot(
+        owner_character, owner_character ? owner_character->view_tick() : 0.0,
+        aim.origin, -aim.basis.get_column(2).normalized(), distance,
+        &body_position, &body_normal);
+    if (body) {
+      collider = body;
+      *position = body_position;
+      *normal = body_normal;
+    }
+  }
+  return collider;
+}
+
+Dictionary Weapon::CastRay(const Transform3D& aim,
+                           const TypedArray<RID>& exclude_bodies) {
   Vector3 from = aim.origin;
   Vector3 to = aim.xform(Vector3(0.0f, 0.0f, -kRange));
 
@@ -211,6 +245,9 @@ Dictionary Weapon::CastRay(const Transform3D& aim) {
 
   // Don't hit the player the weapon is attached to.
   TypedArray<RID> exclude;
+  for (int64_t i = 0; i < exclude_bodies.size(); i++) {
+    exclude.push_back(exclude_bodies[i]);
+  }
   PhysicsBody3D* owner_body = Object::cast_to<PhysicsBody3D>(get_parent());
   if (owner_body) {
     exclude.push_back(owner_body->get_rid());

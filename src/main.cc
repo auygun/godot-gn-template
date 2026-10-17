@@ -233,6 +233,7 @@ FpsCharacter* Main::SpawnPlayer(int peer_id, const Transform3D& transform) {
 
   Weapon* weapon = player->weapon();
   if (weapon && is_server()) {
+    weapon->SetShotResolver(this);
     weapon->connect("hit", callable_mp(this, &Main::OnWeaponHit).bind(peer_id));
     weapon->connect("killed",
                     callable_mp(this, &Main::OnWeaponKilled).bind(peer_id));
@@ -316,7 +317,10 @@ void Main::ServerTick(float dt) {
   }
   for (auto& [peer_id, player] : players_) {
     if (peer_id == local_peer_id_) {
-      player->Simulate(player->GatherInput(), dt);
+      // It sees the bodies as they are (as of the last tick).
+      PlayerInput command = player->GatherInput();
+      command.view_tick = static_cast<double>(tick_ - 1);
+      player->Simulate(command, dt);
       continue;
     }
     auto client = clients_.find(peer_id);
@@ -335,12 +339,65 @@ void Main::ServerTick(float dt) {
       }
       connection.last_simulated = connection.next_sequence++;
     }
-    player->Simulate(connection.last_command, dt);
+    // A client sees the bodies in the past, but not further than
+    // kMaxRewindTicks, nor in the future.
+    PlayerInput command = connection.last_command;
+    double now = static_cast<double>(tick_ - 1);
+    if (!(command.view_tick >= now - kMaxRewindTicks)) {  // Also NaN.
+      command.view_tick = now - kMaxRewindTicks;
+    }
+    command.view_tick = std::min(command.view_tick, now);
+    player->Simulate(command, dt);
   }
+  RecordHitboxes();
   if (mode_ != Mode::kOffline && tick_ % kSnapshotInterval == 0) {
     SendSnapshots();
   }
   UpdateHud();
+}
+
+void Main::RecordHitboxes() {
+  // After the players moved; targets move in their own _physics_process,
+  // after this, so theirs are a tick old, which is what clients see too
+  // (the snapshot is taken here).
+  std::vector<LagCompensation::Body> bodies;
+  for (const auto& [peer_id, player] : players_) {
+    bodies.push_back({player, !player->dead()});
+  }
+  for (Target* target : targets_) {
+    bodies.push_back({target, !target->dead()});
+  }
+  lag_compensation_.Record(tick_, bodies);
+}
+
+TypedArray<RID> Main::ShootableBodies() {
+  TypedArray<RID> bodies;
+  for (const auto& [peer_id, player] : players_) {
+    bodies.push_back(player->get_rid());
+  }
+  for (Target* target : targets_) {
+    bodies.push_back(target->get_rid());
+  }
+  return bodies;
+}
+
+Node3D* Main::ResolveShot(const Node3D* shooter,
+                          double view_tick,
+                          const Vector3& origin,
+                          const Vector3& direction,
+                          float max_distance,
+                          Vector3* position,
+                          Vector3* normal) {
+  Node3D* body = lag_compensation_.Raycast(
+      view_tick, origin, direction, max_distance, shooter, position, normal);
+  // It may have died since (a body is only shot once dead in the past if
+  // it's still alive now).
+  FpsCharacter* player = Object::cast_to<FpsCharacter>(body);
+  Target* target = Object::cast_to<Target>(body);
+  if ((player && player->dead()) || (target && target->dead())) {
+    return nullptr;
+  }
+  return body;
 }
 
 void Main::SendSnapshots() {
@@ -395,6 +452,7 @@ void Main::ClientTick(float dt) {
   FpsCharacter* player = local->second;
   // Our own player moves now, under the command the server will get.
   PlayerInput command = player->GatherInput();
+  command.view_tick = interpolator_.render_tick();
   if (prediction_.SkipThisTick()) {
     return;
   }

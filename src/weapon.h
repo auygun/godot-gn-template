@@ -8,6 +8,8 @@
 #include <godot_cpp/classes/packed_scene.hpp>
 #include <godot_cpp/core/binder_common.hpp>
 #include <godot_cpp/core/gdvirtual.gen.inc>
+#include <godot_cpp/variant/rid.hpp>
+#include <godot_cpp/variant/typed_array.hpp>
 
 #include "src/player_state.h"
 
@@ -17,6 +19,27 @@ class AudioStreamPlayer3D;
 class Camera3D;
 class CPUParticles3D;
 class OmniLight3D;
+
+// Decides what a shot hits among the shootable bodies (players and
+// targets), when the physics space can't: the server tests them as the
+// shooter saw them (LagCompensation).
+class ShotResolver {
+ public:
+  // The bodies it decides about, for the physics ray to pass through.
+  virtual TypedArray<RID> ShootableBodies() = 0;
+  // The nearest body the ray hits within max_distance, as seen at
+  // view_tick, never shooter; null if none.
+  virtual Node3D* ResolveShot(const Node3D* shooter,
+                              double view_tick,
+                              const Vector3& origin,
+                              const Vector3& direction,
+                              float max_distance,
+                              Vector3* position,
+                              Vector3* normal) = 0;
+
+ protected:
+  virtual ~ShotResolver() = default;
+};
 
 class Weapon : public Node3D {
   GDCLASS(Weapon, Node3D);
@@ -44,6 +67,9 @@ class Weapon : public Node3D {
   // The camera to follow and aim from (the owner's first-person camera);
   // null leaves the weapon where the scene put it, on the owner's body.
   void SetCamera(Camera3D* camera);
+  // Where an authoritative shot's hits on players and targets come from;
+  // without one, the physics space's ray decides.
+  void SetShotResolver(ShotResolver* resolver) { shot_resolver_ = resolver; }
 
   // The game state, for the owner's.
   WeaponState CaptureState() const;
@@ -68,7 +94,8 @@ class Weapon : public Node3D {
   // Length of the hitscan ray, in meters.
   static constexpr float kRange = 100.0f;
   // Physics layers shots hit (named in project.godot): world (1),
-  // shot_only (3) and player (4), not player_clip (2).
+  // shot_only (3) and player (4), not player_clip (2). With a
+  // ShotResolver, the ray passes through its bodies.
   static constexpr uint32_t kShotMask = (1u << 0) | (1u << 2) | (1u << 3);
   // The barrel aims at the crosshair's hit point, but never closer than
   // this (pressed against a wall it would turn sideways), in meters.
@@ -114,8 +141,16 @@ class Weapon : public Node3D {
   // server), or the weapon's own transform without an owner.
   Transform3D ShotTransform() const;
   // Ray from aim's origin along its -Z, kRange long, not hitting the
-  // owner. Returns intersect_ray's result (empty: no hit).
-  Dictionary CastRay(const Transform3D& aim);
+  // owner nor the excluded bodies. Returns intersect_ray's result (empty:
+  // no hit).
+  Dictionary CastRay(const Transform3D& aim,
+                     const TypedArray<RID>& exclude = TypedArray<RID>());
+  // An authoritative shot's hit: the nearest of the level (the physics
+  // ray) and, with a ShotResolver, its bodies. Sets the collider (null: a
+  // miss), position and normal.
+  Object* ResolveHit(const Transform3D& aim,
+                     Vector3* position,
+                     Vector3* normal);
   // Measure how far the crosshair's hit point is (a physics query, so once
   // per tick), for UpdatePose to aim the barrel at.
   void UpdateAimTarget();
@@ -159,6 +194,7 @@ class Weapon : public Node3D {
   // Muzzle/FireSound.
   AudioStreamPlayer3D* fire_sound_ = nullptr;
 
+  ShotResolver* shot_resolver_ = nullptr;
   Ref<PackedScene> impact_scene_;
   // Instance IDs of the live impacts, a ring buffer of impact_limit_
   // entries; stale IDs (impacts that freed themselves) resolve to null.

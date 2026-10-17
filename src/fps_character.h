@@ -90,6 +90,8 @@ class FpsCharacter : public CharacterBody3D {
   Camera3D* camera() const { return camera_; }
   Weapon* weapon() const { return weapon_; }
   uint8_t respawn_count() const { return respawn_count_; }
+  // The view tick of the command being simulated (PlayerInput::view_tick).
+  double view_tick() const { return view_tick_; }
   int health() const { return health_; }
   bool dead() const { return dead_; }
   // On the floor after the last tick.
@@ -182,6 +184,7 @@ class FpsCharacter : public CharacterBody3D {
   uint32_t shot_count_ = 0;
   // Respawns, wrapping: a client snaps its look when it changes.
   uint8_t respawn_count_ = 0;
+  double view_tick_ = 0.0;
   // On the floor after the last tick's move. Kept here rather than read
   // from the body, so it can be sent and restored.
   bool on_floor_ = false;

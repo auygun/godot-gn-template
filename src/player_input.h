@@ -5,11 +5,13 @@
 
 #include <godot_cpp/variant/vector2.hpp>
 
+#include "src/net/replicate.h"
+
 namespace godot {
 
 // One physics tick's command for an FpsCharacter: everything its
-// simulation reads from the player. Local devices fill it on a client; a
-// server would run the commands it receives.
+// simulation reads from the player. Local devices fill it on its owner's
+// machine; the server runs the commands it receives.
 //
 // Buttons are held states, not presses: the simulation finds presses by
 // comparing with the previous command, so a repeated command (e.g. resent
@@ -25,15 +27,22 @@ struct PlayerInput {
   // simulation ignores the look of commands from before the latest
   // respawn, which would undo the spawn's facing.
   uint8_t respawn_count = 0;
-  // The server tick the client was drawing everything else at when it made
-  // the command (fractional, SnapshotInterpolator's render clock): a shot
-  // is tested against the bodies as they were then (LagCompensation).
-  // Offline and on a listen server's own player: the tick itself.
-  double view_tick = 0.0;
   bool jump = false;
   bool sprint = false;
   bool fire = false;
   bool reload = false;
+
+  template <class V>
+  void Replicate(V& v) {
+    v(move, net::Unit());
+    v(yaw, net::Angle());
+    v(pitch, net::Pitch());
+    v(respawn_count, net::Exact());
+    v(jump, net::Exact());
+    v(sprint, net::Exact());
+    v(fire, net::Exact());
+    v(reload, net::Exact());
+  }
 };
 
 }  // namespace godot

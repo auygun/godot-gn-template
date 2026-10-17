@@ -1,33 +1,10 @@
-#include "src/client_prediction.h"
+#include "src/net/client_prediction.h"
 
 #include <algorithm>
-#include <cmath>
 
-#include "src/fps_character.h"
+#include "src/net/entity.h"
 
-namespace godot {
-
-namespace {
-
-// Whether a prediction got the server's result. The server runs the same
-// code from the same state, so they usually match exactly; the margins
-// only allow for float noise.
-bool Matches(const PlayerState& predicted, const PlayerState& server) {
-  return predicted.position.distance_squared_to(server.position) < 1e-6f &&
-         predicted.velocity.distance_squared_to(server.velocity) < 1e-4f &&
-         std::abs(predicted.recoil - server.recoil) < 1e-4f &&
-         std::abs(predicted.recoil_yaw - server.recoil_yaw) < 1e-4f &&
-         std::abs(predicted.landing_offset - server.landing_offset) < 1e-4f &&
-         predicted.on_floor == server.on_floor &&
-         predicted.shot_count == server.shot_count &&
-         predicted.respawn_count == server.respawn_count &&
-         predicted.dead == server.dead &&
-         predicted.weapon.ammo == server.weapon.ammo &&
-         predicted.weapon.reserve_ammo == server.weapon.reserve_ammo &&
-         predicted.weapon.reloading == server.weapon.reloading;
-}
-
-}  // namespace
+namespace godot::net {
 
 ClientPrediction::ClientPrediction() = default;
 
@@ -41,19 +18,20 @@ bool ClientPrediction::SkipThisTick() {
   return false;
 }
 
-void ClientPrediction::Predict(FpsCharacter* player,
-                               const PlayerInput& command,
+void ClientPrediction::Predict(Entity* entity,
+                               const TimedCommand& command,
                                float dt) {
   sequence_++;
   // 0 means none.
   if (sequence_ == 0) {
     sequence_++;
   }
-  player->Simulate(command, dt, SimulationMode::kPredicted);
+  entity->SimulateBox(command.command,
+                      {dt, SimulationMode::kPredicted, command.view_tick});
   Entry& entry = history_[sequence_ % kHistorySize];
   entry.sequence = sequence_;
   entry.command = command;
-  entry.state = player->CaptureState();
+  entity->CaptureBox(&entry.state);
   predicted_count_++;
 }
 
@@ -72,34 +50,40 @@ InputMessage ClientPrediction::MakeInputMessage() const {
   return message;
 }
 
-void ClientPrediction::Reconcile(FpsCharacter* player,
+void ClientPrediction::Reconcile(Entity* entity,
                                  uint32_t ack,
                                  int input_buffer,
-                                 const PlayerState& server_state,
+                                 const Box& server_state,
                                  float dt) {
   AdjustRate(ack, input_buffer);
-  // The state for an acknowledged command doesn't change (snapshots that
-  // arrive out of order are dropped before this).
-  if (ack != 0 && ack == last_ack_) {
+  const Entry* acked = ack != 0 ? Find(ack) : nullptr;
+  // What only the server changes (health, scores) is taken whenever it
+  // differs, even for a command already reconciled.
+  bool server_fields_same =
+      !acked || SameServerFields(acked->state, server_state);
+  // The state for an acknowledged command doesn't change otherwise
+  // (snapshots that arrive out of order are dropped before this).
+  if (ack != 0 && ack == last_ack_ && server_fields_same) {
     return;
   }
   last_ack_ = ack;
 
-  const Entry* acked = ack != 0 ? Find(ack) : nullptr;
-  if (acked && Matches(acked->state, server_state)) {
+  bool matches = acked && PredictionMatches(acked->state, server_state);
+  if (matches && server_fields_same) {
     return;
   }
   // A command the server repeated for a sequence number we skipped (see
   // AdjustRate) was never predicted: not a misprediction.
-  if (acked) {
+  if (acked && !matches) {
     correction_count_++;
   }
 
   // Back to the server's state, then forward through the commands it
   // hasn't simulated yet.
-  Vector3 predicted_position = player->get_global_position();
-  uint8_t predicted_respawn = player->respawn_count();
-  player->RestoreState(server_state);
+  Vector3 predicted_position = entity->Position();
+  Box predicted;
+  entity->CaptureBox(&predicted);
+  entity->RestoreBox(server_state);
   uint32_t first = ack + 1;
   if (sequence_ - ack >= kHistorySize) {
     first = sequence_ - kHistorySize + 1;
@@ -109,15 +93,16 @@ void ClientPrediction::Reconcile(FpsCharacter* player,
     if (!entry) {
       continue;
     }
-    player->Simulate(entry->command, dt, SimulationMode::kReplay);
-    entry->state = player->CaptureState();
+    entity->SimulateBox(entry->command.command, {dt, SimulationMode::kReplay,
+                                                 entry->command.view_tick});
+    entity->CaptureBox(&entry->state);
   }
-
-  if (player->respawn_count() != predicted_respawn) {
-    player->OnTeleported();
+  Box corrected;
+  entity->CaptureBox(&corrected);
+  if (SameTeleportFields(predicted, corrected)) {
+    entity->OnCorrected(predicted_position - entity->Position());
   } else {
-    player->SmoothCorrection(predicted_position -
-                             player->get_global_position());
+    entity->OnTeleported();
   }
 }
 
@@ -162,4 +147,4 @@ const ClientPrediction::Entry* ClientPrediction::Find(uint32_t sequence) const {
   return sequence != 0 && entry.sequence == sequence ? &entry : nullptr;
 }
 
-}  // namespace godot
+}  // namespace godot::net

@@ -1,24 +1,23 @@
-#ifndef SRC_CLIENT_PREDICTION_H_
-#define SRC_CLIENT_PREDICTION_H_
+#ifndef SRC_NET_CLIENT_PREDICTION_H_
+#define SRC_NET_CLIENT_PREDICTION_H_
 
 #include <array>
 #include <cstdint>
 
-#include "src/net_protocol.h"
-#include "src/player_input.h"
-#include "src/player_state.h"
+#include "src/net/protocol.h"
+#include "src/net/replicate.h"
 
-namespace godot {
+namespace godot::net {
 
-class FpsCharacter;
+class Entity;
 
-// A client's prediction of its own player: each command is simulated as
+// A client's prediction of its own entity: each command is simulated as
 // soon as it is made, rather than a round trip later when the server's
 // state for it arrives.
 //
 // The commands and the states they produced are kept until the server
 // acknowledges them. When the server's state for an acknowledged command
-// differs from the prediction, the player is put back to the server's
+// differs from the prediction, the entity is put back to the server's
 // state and the commands since are simulated again (without effects); the
 // view eases across the difference.
 //
@@ -36,17 +35,17 @@ class ClientPrediction {
 
   // Whether to make no command this tick, to shorten the server's queue.
   bool SkipThisTick();
-  // Simulate the player under a new command, and record both.
-  void Predict(FpsCharacter* player, const PlayerInput& command, float dt);
+  // Simulate the entity under a new command (quantized), and record both.
+  void Predict(Entity* entity, const TimedCommand& command, float dt);
   // The latest commands, for the server.
   InputMessage MakeInputMessage() const;
-  // A snapshot: the server's state for the player after command ack (0:
+  // A snapshot: the server's state for the entity after command ack (0:
   // none of ours yet), and how many ticks early our commands arrive there
-  // (SnapshotMessage::input_buffer).
-  void Reconcile(FpsCharacter* player,
+  // (Snapshot::input_buffer).
+  void Reconcile(Entity* entity,
                  uint32_t ack,
                  int input_buffer,
-                 const PlayerState& server_state,
+                 const Box& server_state,
                  float dt);
 
   // Counts for the log.
@@ -65,9 +64,9 @@ class ClientPrediction {
 
   struct Entry {
     uint32_t sequence = 0;  // 0: empty
-    PlayerInput command;
+    TimedCommand command;
     // The state after the command.
-    PlayerState state;
+    Box state;
   };
 
   // Start lengthening or shortening the server's queue, once the last
@@ -95,6 +94,6 @@ class ClientPrediction {
   uint32_t correction_count_ = 0;
 };
 
-}  // namespace godot
+}  // namespace godot::net
 
-#endif  // SRC_CLIENT_PREDICTION_H_
+#endif  // SRC_NET_CLIENT_PREDICTION_H_

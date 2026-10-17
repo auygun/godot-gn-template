@@ -98,7 +98,7 @@ ninja -C out/android/release          # .so + app.apk (no_apk=true for just the 
   to the `Hud`.
 - `FpsCharacter` separates simulation from presentation. Each physics tick,
   `GatherInput()` builds a `PlayerInput` command from the local devices, and
-  `Simulate(command, dt)` advances all game state from that command alone
+  `Simulate(command, context)` advances all game state from that command alone
   (movement, aim, recoil, `Weapon::Tick`). Buttons are held states, and
   presses are detected against the previous command. Shots come from
   `AimTransform()` (game state), not the camera. Camera and weapon motion
@@ -107,75 +107,84 @@ ninja -C out/android/release          # .so + app.apk (no_apk=true for just the 
   enabled in `project.godot`. Keep new gameplay state on the simulation side
   so a server without devices or a camera could run it.
 
-## Multiplayer (`src/main.cc`, `src/client_prediction.cc`, `src/snapshot_interpolator.cc`, `src/lag_compensation.cc`, `src/net_protocol.h`)
+## Multiplayer: the netcode framework (`src/net/`)
 
-- Server-authoritative. The mode comes from the user args after `--`
-  (`Main::ParseCommandLine`); offline is a server without the network, so
-  single player runs the server's code. ENet through the SceneTree's
+- `src/net/` (namespace `godot::net`, its own `source_set("net")`) is
+  game-agnostic and must not include anything from the game: check with
+  `grep -rn '#include "src/' src/net/ | grep -v '"src/net/'`. The game only
+  declares what it replicates and implements the entity interface.
+- Server-authoritative. `NetSession` (a node in `main.tscn`) parses the mode
+  from the user args after `--`; offline is a server without the network,
+  so single player runs the server's code. ENet through the SceneTree's
   `SceneMultiplayer`, with our own binary messages (`send_bytes`,
-  `peer_packet`), not RPCs or `MultiplayerSynchronizer`. Bump
-  `kProtocolVersion` when a message changes. ENet compresses every packet
-  (range coder; both sides must use the same mode).
-- Wire format (`net_protocol.cc`): what is only drawn is quantized
-  (positions to 2 mm, angles to 16 bits); what feeds prediction is exact
-  (the client's own player's full state) or quantized before the client
-  uses it (`QuantizeCommand`), so both sides compute with the same values.
-  Snapshots are per client: its own player's `PlayerState`, everyone
-  else's `RemoteView` (position, look, flags, counter low bytes, score).
-  They're delta encoded against the newest snapshot the client acked
-  (`InputMessage::snapshot_ack`; both sides keep the last 32), with
-  per-entry change masks; without a usable baseline the snapshot is full,
-  and a client drops one whose baseline it lacks. Debug builds decode
-  every snapshot they encode and compare (`CheckSnapshotEncoding`).
-- `Main::_physics_process` runs each tick before the players' own. The
-  server calls `Simulate` for every player, with the local player's
-  `GatherInput()` or the client's queued commands (repeating the last when
-  none arrived). Every `kSnapshotInterval` (2) ticks it sends each client
-  a snapshot: every player's
-  `PlayerState` (`src/player_state.h`, everything `Simulate` reads or
-  writes), the targets, and the client's last simulated command (`ack`).
-  Hits and kills go to the shooter as reliable events.
-- A client predicts its own player (`ClientPrediction`): each tick it
+  `peer_packet`), not Godot's RPCs or `MultiplayerSynchronizer`. ENet
+  compresses every packet (range coder; both sides must use the same mode).
+- Declaring replication: every replicated struct (entity states, the
+  command, RPC payloads) has a `template <class V> void Replicate(V& v)`
+  listing its fields once: `v(field, codec, flags)`. Codecs (`replicate.h`):
+  `Exact(tolerance)`, `Position` (2 mm), `Angle`/`Pitch` (16 bits), `Unit`
+  (8 bits), `LowByte`. Flags: `kOwner`/`kOthers`/`kAll` (who gets it; the
+  owner always exact, others through the codec), `kPredicted` (compared by
+  reconciliation, within the codec's tolerance), `kServer` (only the server
+  changes it: a difference restores the server's state without counting a
+  misprediction), `kBlend` (interpolated; angles the short way),
+  `kTeleport` (a change disables blending and makes a correction a
+  teleport). Encoding, deltas, quantization, comparison, blending and the
+  debug round-trip check are all generated from it. Structs must be
+  trivially copyable (`<= kMaxStateSize`).
+- `Main::_ready` registers the `Schema`: `SetCommand<PlayerInput>()`,
+  `AddEntityType<PlayerState>()`, `AddEntityType<TargetState>()`,
+  `AddRpc<HitEvent>(handler)`, ... in the same order on every side. Clients
+  send the schema's hash on connecting and a mismatch is rejected, so there
+  is no protocol version to bump; `kWireVersion` only covers the
+  framework's own format.
+- Entities: game nodes derive from `net::TypedEntity<State, Command>`
+  (`entity.h`) and implement `CaptureState`, `RestoreState`, `ApplyState`
+  (restore plus effects, e.g. a shot when `shot_count` changes), `Simulate`
+  and `GatherInput`. The server adds them with `NetSession::AddEntity(entity,
+  type, owner)`; scene entities (the targets) are added in the same order on
+  every side before `Start()`. Clients get the rest from snapshots through
+  `SessionDelegate::SpawnEntity`/`DespawnEntity` (`Main`).
+- `NetSession::_physics_process` runs before every other node's. The server
+  calls `Simulate` on each owned entity with its owner's command: the local
+  player's `GatherInput()`, or the client's queued commands by sequence
+  number (repeating the last when one is missing, dropping it if it comes
+  later). Unowned entities (targets) simulate themselves. Every
+  `kSnapshotInterval` (2) ticks each client gets a snapshot: every entity's
+  state as that client sees it, plus the last command simulated (`ack`) and
+  how early its commands arrive (`input_buffer`; the client keeps it at 2
+  ticks by skipping sequence numbers or a tick's command). Snapshots are
+  delta encoded per field against the newest one the client acked (both
+  sides keep 32); a client drops one whose baseline it lacks.
+- A client predicts its own entity (`ClientPrediction`): each tick it
   simulates its new command right away (`SimulationMode::kPredicted`:
-  effects, but hits and damage stay the server's) and sends its last 4
-  commands. On a snapshot, if the server's state after the acknowledged
-  command differs from the prediction, it restores the server's state and
-  replays the unacknowledged commands (`kReplay`: game state only); the
-  camera eases across the difference (`SmoothCorrection`). Prediction uses
-  the newest snapshot.
-- Everything else a client shows (other players, targets, joins and
-  leaves) is drawn ~100 ms in the past by `SnapshotInterpolator`: a render
-  clock in server ticks, kept 6 ticks behind the server's estimated time,
-  blends the snapshots around it (positions and look; the rest, like
-  deaths and respawns, from the older one). Other players get that state
-  through `FpsCharacter::ApplyState`, which plays a shot's effects when
-  `shot_count` goes up.
-- Lag compensation: each command carries the server tick the client was
-  drawing (`PlayerInput::view_tick`, the render clock), and the server
-  tests that command's shots against the players and targets as they were
-  then (at most `kMaxRewindTicks` back). Moved bodies don't show in
-  physics queries until the next physics step, so `LagCompensation` keeps
-  each tick's hitboxes (from the bodies' `CollisionShape3D`: capsules and
-  boxes) and tests rays against them in plain math. `Main` is the
-  weapons' `ShotResolver`: the physics ray finds the level (passing
-  through the bodies), the history the bodies, and the nearer wins.
-- The server simulates each client's commands by sequence number, one per
-  tick; a missing one is replaced by repeating the last, and dropped if it
-  comes later. Snapshots report how early the client's commands arrive
-  (`input_buffer`), and the client keeps that at 2 ticks by skipping
-  sequence numbers (late) or a tick's command (too early). Only
-  `Simulate`'s inputs and `PlayerState` may affect the outcome, or
-  predictions won't match: e.g. floor snapping goes by `on_floor_`, not
-  the body's last `move_and_slide`.
+  effects, but hits and damage stay the server's), sends its last 4
+  commands, and on a snapshot restores the server's state and replays the
+  unacknowledged commands (`kReplay`) if the prediction differs; the view
+  eases across the difference (`Entity::OnCorrected`). Everything else is
+  drawn ~100 ms in the past by `SnapshotInterpolator`, blending the
+  `kBlend` fields.
+- Lag compensation: each command carries the server tick its client was
+  drawing (`SimContext::view_tick`), and `NetSession::Raycast` tests rays
+  against the bodies' hitboxes as they were then (`LagCompensation`, from
+  each entity's `HitboxBody`, at most `kMaxRewindTicks` back). `Main` is
+  the weapons' `ShotResolver`.
+- Only `Simulate`'s inputs and the state struct may affect the outcome, or
+  predictions won't match: e.g. floor snapping goes by `on_floor_`, not the
+  body's last `move_and_slide`. Anything new in `Simulate` belongs in
+  `PlayerState` with a `Replicate` entry.
+
+## The game (`src/main.cc`, `src/fps_character.cc`, ...)
+
 - Characters that aren't the local player's (`set_local(false)`) drop their
-  camera and touch controls, and their weapon stays on the body. Anything
-  new in `Simulate` belongs in `PlayerState` and the snapshot.
+  camera and touch controls, and their weapon stays on the body.
 - Physics layer 4 `player`: players don't collide with each other, shots
   hit them.
 - Deathmatch: a player has 100 health (`PlayerState::health`, `dead`, set
   only by the server: `FpsCharacter::TakeDamage` from `Weapon` hits). A
   dead player's commands do nothing and its body is hidden and off the
-  player layer; `Main` counts the kill, and respawns it after
-  `kRespawnDelay` at the spawn point farthest from the living. Scores
-  (`Main::scores_`) go out in every snapshot. Targets are practice only:
-  hit markers, no score.
+  player layer; `Main` counts the kill (`FpsCharacter::kills`/`deaths`,
+  `kServer` fields of its state), and respawns it after `kRespawnDelay` at
+  the spawn point farthest from the living. Hits, kills and damage reach
+  the player's client as RPCs. Targets are practice only: hit markers, no
+  score.

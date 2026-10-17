@@ -1,49 +1,16 @@
-#include "src/snapshot_interpolator.h"
+#include "src/net/snapshot_interpolator.h"
 
 #include <algorithm>
 #include <cmath>
 #include <iterator>
 
-#include <godot_cpp/core/math.hpp>
-
-namespace godot {
-
-namespace {
-
-const SnapshotPlayer* FindPlayer(const SnapshotMessage& snapshot,
-                                 int32_t peer_id) {
-  for (const SnapshotPlayer& player : snapshot.players) {
-    if (player.peer_id == peer_id) {
-      return &player;
-    }
-  }
-  return nullptr;
-}
-
-// The older state, moved a fraction t of the way to the newer one.
-// Respawns and other jumps don't blend.
-PlayerState Blend(const PlayerState& from, const PlayerState& to, float t) {
-  PlayerState state = from;
-  if (from.respawn_count != to.respawn_count) {
-    return state;
-  }
-  state.position = from.position.lerp(to.position, t);
-  state.velocity = from.velocity.lerp(to.velocity, t);
-  state.yaw = Math::lerp_angle(from.yaw, to.yaw, t);
-  state.pitch = Math::lerp(from.pitch, to.pitch, t);
-  state.recoil = Math::lerp(from.recoil, to.recoil, t);
-  state.recoil_yaw = Math::lerp(from.recoil_yaw, to.recoil_yaw, t);
-  state.landing_offset = Math::lerp(from.landing_offset, to.landing_offset, t);
-  return state;
-}
-
-}  // namespace
+namespace godot::net {
 
 SnapshotInterpolator::SnapshotInterpolator() = default;
 
 SnapshotInterpolator::~SnapshotInterpolator() = default;
 
-void SnapshotInterpolator::Add(const SnapshotMessage& snapshot) {
+void SnapshotInterpolator::Add(const Snapshot& snapshot) {
   if (!started_ && snapshots_.empty()) {
     base_tick_ = snapshot.tick;
   }
@@ -71,11 +38,11 @@ void SnapshotInterpolator::Add(const SnapshotMessage& snapshot) {
   }
 }
 
-bool SnapshotInterpolator::Sample(SnapshotMessage* out) {
+bool SnapshotInterpolator::Sample(Snapshot* out) {
   if (snapshots_.empty()) {
     return false;
   }
-  auto time_of = [this](const SnapshotMessage& snapshot) {
+  auto time_of = [this](const Snapshot& snapshot) {
     return static_cast<float>(static_cast<int32_t>(snapshot.tick - base_tick_));
   };
 
@@ -101,30 +68,24 @@ bool SnapshotInterpolator::Sample(SnapshotMessage* out) {
   while (snapshots_.size() > 1 && time_of(snapshots_[1]) <= render_time_) {
     snapshots_.pop_front();
   }
-  const SnapshotMessage& from = snapshots_.front();
+  const Snapshot& from = snapshots_.front();
   *out = from;
   if (snapshots_.size() < 2 || time_of(from) > render_time_) {
     // Past the newest (late packets) or before the oldest: hold.
     return true;
   }
-  const SnapshotMessage& to = snapshots_[1];
+  const Snapshot& to = snapshots_[1];
   float t = (render_time_ - time_of(from)) / (time_of(to) - time_of(from));
 
-  for (SnapshotPlayer& player : out->players) {
-    const SnapshotPlayer* next = FindPlayer(to, player.peer_id);
-    if (next) {
-      player.state = Blend(player.state, next->state, t);
-    }
-  }
-  size_t count = std::min(out->targets.size(), to.targets.size());
-  for (size_t i = 0; i < count; i++) {
-    SnapshotTarget& target_state = out->targets[i];
-    if (target_state.dead == to.targets[i].dead) {
-      target_state.position =
-          target_state.position.lerp(to.targets[i].position, t);
+  for (SnapshotEntity& entity : out->entities) {
+    const SnapshotEntity* next = to.Find(entity.id);
+    if (next && next->type == entity.type && next->owner == entity.owner) {
+      Box blended;
+      Blend(entity.state, next->state, t, &blended);
+      entity.state = blended;
     }
   }
   return true;
 }
 
-}  // namespace godot
+}  // namespace godot::net

@@ -82,8 +82,8 @@ void FpsCharacter::set_local(bool local) {
 }
 
 void FpsCharacter::_physics_process(double delta) {
-  // Main has already simulated (or, on a client, applied the server's
-  // state for) this tick.
+  // The NetSession has already simulated (or, on a client, applied the
+  // server's state for) this tick.
   prev_correction_offset_ = correction_offset_;
   correction_offset_ =
       correction_offset_ *
@@ -122,9 +122,18 @@ PlayerInput FpsCharacter::GatherInput() {
   return command;
 }
 
+PlayerInput FpsCharacter::IdleInput() const {
+  PlayerInput command;
+  command.yaw = yaw_;
+  command.pitch = pitch_;
+  command.respawn_count = respawn_count_;
+  return command;
+}
+
 void FpsCharacter::Simulate(const PlayerInput& command,
-                            float dt,
-                            SimulationMode mode) {
+                            const net::SimContext& context) {
+  float dt = context.dt;
+  net::SimulationMode mode = context.mode;
   // The command may come over the network: keep it in range.
   PlayerInput input = command;
   input.move =
@@ -137,7 +146,7 @@ void FpsCharacter::Simulate(const PlayerInput& command,
     pitch_ = static_cast<float>(
         UtilityFunctions::clampf(input.pitch, -kPitchLimit, kPitchLimit));
   }
-  view_tick_ = input.view_tick;
+  view_tick_ = context.view_tick;
   if (dead_) {
     // Lying where it died until the server respawns it; what the player
     // presses meanwhile mustn't count as a press after.
@@ -197,7 +206,7 @@ void FpsCharacter::Simulate(const PlayerInput& command,
   local_velocity_ = get_global_basis().xform_inv(get_real_velocity());
 
   // Walked off the edge of the map.
-  if (mode == SimulationMode::kAuthoritative &&
+  if (mode == net::SimulationMode::kAuthoritative &&
       get_global_transform().origin.y < kFallLimit) {
     Respawn();
   }
@@ -237,6 +246,8 @@ PlayerState FpsCharacter::CaptureState() const {
   if (weapon_) {
     state.weapon = weapon_->CaptureState();
   }
+  state.kills = static_cast<uint16_t>(kills_);
+  state.deaths = static_cast<uint16_t>(deaths_);
   return state;
 }
 
@@ -260,6 +271,8 @@ void FpsCharacter::RestoreState(const PlayerState& state) {
     SetBodyActive(!dead_);
   }
   prev_input_ = state.prev_input;
+  kills_ = state.kills;
+  deaths_ = state.deaths;
   local_velocity_ = get_global_basis().xform_inv(state.velocity);
   if (weapon_) {
     weapon_->RestoreState(state.weapon);
@@ -281,6 +294,11 @@ void FpsCharacter::ApplyState(const PlayerState& state) {
   }
 }
 
+Node3D* FpsCharacter::HitboxBody(bool* active) {
+  *active = !dead_;
+  return this;
+}
+
 void FpsCharacter::OnTeleported() {
   reset_physics_interpolation();
   prev_landing_offset_ = landing_offset_;
@@ -291,7 +309,7 @@ void FpsCharacter::OnTeleported() {
   look_pitch_ = pitch_;
 }
 
-void FpsCharacter::SmoothCorrection(const Vector3& error) {
+void FpsCharacter::OnCorrected(const Vector3& error) {
   new_correction_ += error;
   if ((correction_offset_ + new_correction_).length() >
       kMaxSmoothedCorrection) {

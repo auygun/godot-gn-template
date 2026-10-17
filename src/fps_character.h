@@ -8,6 +8,7 @@
 #include <godot_cpp/core/binder_common.hpp>
 #include <godot_cpp/core/gdvirtual.gen.inc>
 
+#include "src/net/entity.h"
 #include "src/player_input.h"
 #include "src/player_state.h"
 
@@ -16,7 +17,10 @@ namespace godot {
 class Camera3D;
 class Weapon;
 
-class FpsCharacter : public CharacterBody3D {
+// A player, replicated by the NetSession (src/net/): its owner's commands
+// drive Simulate.
+class FpsCharacter : public CharacterBody3D,
+                     public net::TypedEntity<PlayerState, PlayerInput> {
   GDCLASS(FpsCharacter, CharacterBody3D);
 
  public:
@@ -37,32 +41,37 @@ class FpsCharacter : public CharacterBody3D {
   // Advance the game state by one physics tick under the given command:
   // look, movement, recoil and the weapon. Reads nothing else from the
   // player, so a server can run the commands a client sends. A client
-  // predicts its own player with it too (see SimulationMode); only the
-  // server respawns a player that fell off the map.
+  // predicts its own player with it too (see net::SimulationMode); only
+  // the server respawns a player that fell off the map.
   void Simulate(const PlayerInput& command,
-                float dt,
-                SimulationMode mode = SimulationMode::kAuthoritative);
+                const net::SimContext& context) override;
   // The command from the local devices for this tick.
-  PlayerInput GatherInput();
+  PlayerInput GatherInput() override;
+  // Until its owner's first command: standing still, looking where it
+  // faces.
+  PlayerInput IdleInput() const override;
   // Where shots come from: the eye, looking along the simulated aim plus
   // recoil. Game state only (no bob or interpolation), so a server without
   // a camera gets the same.
   Transform3D AimTransform() const;
 
   // The game state, for the server to send and a client to rewind to.
-  PlayerState CaptureState() const;
+  PlayerState CaptureState() const override;
   // Set the game state, without effects.
-  void RestoreState(const PlayerState& state);
-  // Restore a state the server sent for another player: the body moves
-  // there, and a shot plays its effects.
-  void ApplyState(const PlayerState& state);
+  void RestoreState(const PlayerState& state) override;
+  // Restore a state the server sent (or, for its own player, the first
+  // one): the body moves there, a shot plays its effects, and a respawn
+  // teleports.
+  void ApplyState(const PlayerState& state) override;
   // After the game state jumped (a respawn, the first state): draw the
   // body there rather than sliding, and look where it faces.
-  void OnTeleported();
-  // Ease the view across a correction of the predicted position: it is
-  // drawn this far off (old minus new position), shrinking to nothing
-  // over the next ticks. A large one snaps.
-  void SmoothCorrection(const Vector3& error);
+  void OnTeleported() override;
+  // After a prediction was corrected: ease the view across the difference
+  // (old minus new position), shrinking to nothing over the next ticks; a
+  // large one snaps.
+  void OnCorrected(const Vector3& error) override;
+  Vector3 Position() const override { return get_global_position(); }
+  Node3D* HitboxBody(bool* active) override;
 
   // Back to the spawn transform (or the one given) with full health and
   // ammo and a still camera.
@@ -90,9 +99,14 @@ class FpsCharacter : public CharacterBody3D {
   Camera3D* camera() const { return camera_; }
   Weapon* weapon() const { return weapon_; }
   uint8_t respawn_count() const { return respawn_count_; }
-  // The view tick of the command being simulated (PlayerInput::view_tick).
+  // The view tick of the command being simulated (net::SimContext).
   double view_tick() const { return view_tick_; }
   int health() const { return health_; }
+  // This match's score, kept by the server (Main) and sent with the state.
+  int kills() const { return kills_; }
+  int deaths() const { return deaths_; }
+  void AddKill() { kills_++; }
+  void AddDeath() { deaths_++; }
   bool dead() const { return dead_; }
   // On the floor after the last tick.
   bool on_floor() const { return on_floor_; }
@@ -190,6 +204,8 @@ class FpsCharacter : public CharacterBody3D {
   bool on_floor_ = false;
   int health_ = kMaxHealth;
   bool dead_ = false;
+  int kills_ = 0;
+  int deaths_ = 0;
   // The last command, to find button presses.
   PlayerInput prev_input_;
   // The eye's position relative to the body, from the scene's camera.
@@ -208,7 +224,7 @@ class FpsCharacter : public CharacterBody3D {
   bool fire_held_ = false;
   float step_phase_ = 0.0f;
   float bob_amount_ = 0.0f;
-  // How far off the view is drawn after corrections (SmoothCorrection):
+  // How far off the view is drawn after corrections (OnCorrected):
   // at the last tick, the tick before (for drawing between them, like the
   // landing dip), and added since the last tick.
   Vector3 correction_offset_;

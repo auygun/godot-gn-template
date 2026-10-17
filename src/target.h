@@ -5,9 +5,14 @@
 #include <godot_cpp/core/binder_common.hpp>
 #include <godot_cpp/core/gdvirtual.gen.inc>
 
+#include "src/net/entity.h"
+#include "src/player_state.h"
+
 namespace godot {
 
-class Target : public CharacterBody3D {
+// A practice target, replicated by the NetSession: nobody commands it, the
+// server simulates it on its own and clients draw its state.
+class Target : public CharacterBody3D, public net::TypedEntity<TargetState> {
   GDCLASS(Target, CharacterBody3D);
 
  public:
@@ -21,9 +26,12 @@ class Target : public CharacterBody3D {
   void Respawn();
 
   // On a client, the server simulates the target, and the client applies
-  // the position and death it sends.
+  // the state it sends.
   void set_simulated(bool simulated);
-  void ApplyState(const Vector3& position, bool dead);
+  TargetState CaptureState() const override;
+  void ApplyState(const TargetState& state) override;
+  Vector3 Position() const override { return get_global_position(); }
+  Node3D* HitboxBody(bool* active) override;
 
   float health() const { return health_; }
   bool dead() const { return dead_; }

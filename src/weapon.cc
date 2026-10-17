@@ -101,7 +101,7 @@ void Weapon::_physics_process(double delta) {
 void Weapon::Tick(float dt,
                   bool fire,
                   bool reload_pressed,
-                  SimulationMode mode) {
+                  net::SimulationMode mode) {
   if (reloading_) {
     reload_timer_ -= dt;
     if (reload_timer_ <= 0.0f) {
@@ -132,10 +132,10 @@ void Weapon::Tick(float dt,
 }
 
 void Weapon::Shoot() {
-  Fire(SimulationMode::kAuthoritative);
+  Fire(net::SimulationMode::kAuthoritative);
 }
 
-void Weapon::Fire(SimulationMode mode) {
+void Weapon::Fire(net::SimulationMode mode) {
   // Before "fired": the owner's recoil kick is for the next shot.
   Transform3D aim = ShotTransform();
   ammo_--;
@@ -144,10 +144,10 @@ void Weapon::Fire(SimulationMode mode) {
   fire_cooldown_ += 1.0f / fire_rate_;
   emit_signal("fired");
   emit_signal("ammo_changed", ammo_, reserve_ammo_, reloading_);
-  if (mode == SimulationMode::kReplay) {
+  if (mode == net::SimulationMode::kReplay) {
     return;
   }
-  if (mode == SimulationMode::kPredicted) {
+  if (mode == net::SimulationMode::kPredicted) {
     PlayShotEffects(aim);
     return;
   }

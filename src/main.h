@@ -1,24 +1,15 @@
 #ifndef SRC_MAIN_H_
 #define SRC_MAIN_H_
 
-#include <array>
-#include <cstdint>
-#include <deque>
 #include <map>
 #include <vector>
 
-#include <godot_cpp/classes/multiplayer_peer.hpp>
 #include <godot_cpp/classes/node.hpp>
 #include <godot_cpp/classes/packed_scene.hpp>
-#include <godot_cpp/classes/scene_multiplayer.hpp>
 #include <godot_cpp/core/binder_common.hpp>
 #include <godot_cpp/core/gdvirtual.gen.inc>
 
-#include "src/client_prediction.h"
-#include "src/net/lag_compensation.h"
-#include "src/net_protocol.h"
-#include "src/player_input.h"
-#include "src/snapshot_interpolator.h"
+#include "src/net/session.h"
 #include "src/weapon.h"
 
 namespace godot {
@@ -28,22 +19,11 @@ class Hud;
 class Node3D;
 class Target;
 
-// The game session: spawns the players and runs every physics tick.
-//
-// The server is authoritative: it simulates every player from their
-// commands (the local player's from its devices, the clients' from the
-// network) and sends the game state back each tick. A client sends its
-// commands and draws the state it receives. The mode comes from the
-// command line, after "--":
-//
-//   (nothing)               offline: a server without the network
-//   --host [port]           listen server, with a local player
-//   --server [port]         dedicated server, no local player (--headless)
-//   --join <address> [port] client
-//
-// followed by --lag <ms> and --loss <percent> to simulate a bad network,
-// and --netstats to print the traffic every few seconds.
-class Main : public Node, public ShotResolver {
+// The game: a deathmatch. The networking is the NetSession's (src/net/,
+// the "NetSession" child): Main declares what it replicates (Schema), spawns
+// the players it asks for, and keeps the rules (spawn points, scores,
+// respawns) and the HUD.
+class Main : public Node, public ShotResolver, public net::SessionDelegate {
   GDCLASS(Main, Node);
 
  public:
@@ -51,7 +31,6 @@ class Main : public Node, public ShotResolver {
   ~Main() override;
 
   void _ready() override;
-  void _exit_tree() override;
   void _physics_process(double delta) override;
 
   void set_player_scene(const Ref<PackedScene>& scene) {
@@ -70,172 +49,69 @@ class Main : public Node, public ShotResolver {
                       Vector3* position,
                       Vector3* normal) override;
 
+  // net::SessionDelegate.
+  net::Entity* SpawnEntity(net::EntityId id,
+                           net::TypeId type,
+                           net::PeerId owner,
+                           const net::Box& state) override;
+  void DespawnEntity(net::EntityId id, net::Entity* entity) override;
+  void OnPeerJoined(net::PeerId peer) override;
+  void BeforeServerTick(float dt) override;
+
  protected:
   static void _bind_methods();
 
  private:
-  enum class Mode { kOffline, kHost, kDedicated, kClient };
-
-  // Peer id of the server (and of the player at an offline or host
-  // machine).
-  static constexpr int kServerPeerId = 1;
-  static constexpr int kMaxClients = 15;
-  // The server sends a snapshot every this many ticks.
-  static constexpr uint32_t kSnapshotInterval = 2;
   // How long a killed player waits to respawn, in seconds.
   static constexpr float kRespawnDelay = 3.0f;
-  // How far in the past a client's shots may be tested, in ticks: its
-  // view's delay (SnapshotInterpolator) plus up to 200 ms of latency. A
-  // client with more lag has to lead its targets.
-  static constexpr double kMaxRewindTicks = 6.0 + 12.0;
-  // How far ahead of the next command to simulate the server keeps a
-  // client's commands.
-  static constexpr uint32_t kMaxQueuedCommands = 32;
-  // Simulated network conditions (--lag ms, --loss percent), for testing
-  // prediction: every packet this machine sends is held back or dropped.
-  static constexpr int kMaxLagMs = 1000;
 
-  // On the server, per client. Each tick simulates the client's next
-  // command by sequence number; if it hasn't arrived, the last command
-  // again in its place (and the real one is dropped when it comes).
-  struct ClientConnection {
-    // Received commands not yet simulated, by sequence number.
-    std::map<uint32_t, PlayerInput> queue;
-    // The next sequence number to simulate; 0 until the first command
-    // arrives.
-    uint32_t next_sequence = 0;
-    // The newest sequence number received.
-    uint32_t last_received = 0;
-    // The newest snapshot the client has decoded (0: none), the baseline
-    // for the next.
-    uint32_t snapshot_ack = 0;
-    // The last sequence number simulated (0: none), and its command.
-    uint32_t last_simulated = 0;
-    PlayerInput last_command;
+  // The RPCs: from the server to the client of the player concerned.
+  struct HitEvent {  // its shot hit something
+    template <class V>
+    void Replicate(V& v) {}
   };
+  struct KillEvent {  // ...and killed another player
+    template <class V>
+    void Replicate(V& v) {}
+  };
+  struct DamagedEvent {  // it was hit
+    template <class V>
+    void Replicate(V& v) {}
+  };
+  static void OnHitEvent(void* self, net::PeerId from, const net::Box&);
+  static void OnDamagedEvent(void* self, net::PeerId from, const net::Box&);
 
-  // Read the mode (and address and port) from the command line. False if
-  // it doesn't parse.
-  bool ParseCommandLine();
-  // Start listening or connecting. False on failure.
-  bool StartNetwork();
-
-  // Instance the player scene for peer_id at transform, under Players.
-  FpsCharacter* SpawnPlayer(int peer_id, const Transform3D& transform);
-  void DespawnPlayer(int peer_id);
+  // Instance the player scene for peer at transform, under Players.
+  FpsCharacter* SpawnPlayer(net::PeerId peer, const Transform3D& transform);
   // The next spawn point, round robin.
   Transform3D NextSpawnTransform();
   // The spawn point farthest from the living players (but for exclude).
   Transform3D SafestSpawnTransform(const FpsCharacter* exclude);
+  FpsCharacter* PlayerOf(net::PeerId peer) const;
 
-  void ServerTick(float dt);
-  void ClientTick(float dt);
-  // Remember where the shootable bodies are this tick (LagCompensation).
-  void RecordHitboxes();
-  void SendSnapshots();
-  // The newest snapshot, for our own player's prediction.
-  void ReconcileLocalPlayer(const SnapshotMessage& snapshot, float dt);
-  // A state drawn from the snapshots: everyone else, and the targets.
-  void ApplyRemoteState(const SnapshotMessage& state);
-  void SendInput();
-  void SendEvent(int peer_id, EventType type);
-  // send_bytes through the simulated lag and loss.
-  void Send(const PackedByteArray& bytes,
-            int peer_id,
-            MultiplayerPeer::TransferMode mode);
-  void FlushDelayedPackets();
-
-  void OnPeerConnected(int64_t peer_id);
-  void OnPeerDisconnected(int64_t peer_id);
-  void OnPeerPacket(int64_t peer_id, const PackedByteArray& bytes);
-  void OnConnectedToServer();
-  void OnConnectionFailed();
-  void OnServerDisconnected();
-  void OnInput(int peer_id, const PackedByteArray& bytes);
-  void OnSnapshot(const PackedByteArray& bytes);
-  void OnEvent(const PackedByteArray& bytes);
   // From the players' weapons, bound to the shooter's peer id.
-  void OnWeaponHit(Object* collider, int64_t peer_id);
-  void OnWeaponKilled(Object* victim, int64_t peer_id);
+  void OnWeaponHit(Object* collider, int64_t peer);
+  void OnWeaponKilled(Object* victim, int64_t peer);
   // A player lost health (bound to its peer id).
-  void OnPlayerDamaged(int64_t peer_id);
+  void OnPlayerDamaged(int64_t peer);
   // Show the local player's health and score on the HUD.
   void UpdateHud();
   void OnAmmoChanged(int ammo, int reserve, bool reloading);
 
-  bool is_server() const { return mode_ != Mode::kClient; }
-
   Ref<PackedScene> player_scene_;
+  net::NetSession* session_ = nullptr;
+  net::TypeId player_type_ = 0;
+  net::TypeId target_type_ = 0;
   Hud* hud_ = nullptr;
   Node* players_root_ = nullptr;
-  // The scene's, in order: snapshots refer to them by index.
   std::vector<Target*> targets_;
   std::vector<Node3D*> spawn_points_;
   size_t next_spawn_ = 0;
 
-  Mode mode_ = Mode::kOffline;
-  String address_;
-  int port_ = kDefaultPort;
-  Ref<SceneMultiplayer> multiplayer_;
-  // The player at this machine (0: none, as on a dedicated server).
-  int local_peer_id_ = 0;
-  std::map<int, FpsCharacter*> players_;
-  // This match's score, by peer id; the server's, or the last snapshot's.
-  struct Score {
-    int kills = 0;
-    int deaths = 0;
-  };
-  std::map<int, Score> scores_;
-
-  // The snapshots kept as baselines (each side its own): a second's worth
-  // at 30 per second.
-  static constexpr size_t kSnapshotHistory = 32;
-  // The kept snapshot of tick, or null.
-  const SnapshotMessage* FindSnapshot(uint32_t tick) const;
-#ifdef DEBUG_ENABLED
-  // Debug builds: decode what was just encoded and compare.
-  void CheckSnapshotEncoding(const PackedByteArray& bytes,
-                             const SnapshotMessage& snapshot,
-                             const SnapshotMessage* baseline);
-#endif
-  void KeepSnapshot(const SnapshotMessage& snapshot);
-  std::array<SnapshotMessage, kSnapshotHistory> snapshot_history_;
-
-  // Server.
-  std::map<int, ClientConnection> clients_;
-  uint32_t tick_ = 0;
-  // Seconds until each dead player respawns, by peer id.
-  std::map<int, float> respawn_timers_;
-  LagCompensation lag_compensation_;
-
-  // Client. The newest snapshot, reconciled on the next tick.
-  SnapshotMessage snapshot_;
-  bool has_snapshot_ = false;
-  bool snapshot_pending_ = false;
-  ClientPrediction prediction_;
-  SnapshotInterpolator interpolator_;
-
-  // Simulated network conditions.
-  struct DelayedPacket {
-    uint64_t send_at_usec = 0;
-    PackedByteArray bytes;
-    int peer_id = 0;
-    MultiplayerPeer::TransferMode mode =
-        MultiplayerPeer::TRANSFER_MODE_RELIABLE;
-  };
-  int lag_ms_ = 0;
-  int loss_percent_ = 0;
-
-  // --netstats: print ENet's traffic counters (after compression) every
-  // kNetStatsInterval seconds.
-  static constexpr float kNetStatsInterval = 5.0f;
-  void PrintNetStats(float dt);
-  bool net_stats_ = false;
-  float net_stats_timer_ = 0.0f;
-  uint64_t net_stats_sent_ = 0;
-  uint64_t net_stats_received_ = 0;
-  uint64_t net_stats_packets_ = 0;
-  std::deque<DelayedPacket> delayed_packets_;
+  // By peer id (the owner of each player entity).
+  std::map<net::PeerId, FpsCharacter*> players_;
+  // On the server: seconds until each dead player respawns, by peer id.
+  std::map<net::PeerId, float> respawn_timers_;
 };
 
 }  // namespace godot

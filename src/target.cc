@@ -77,15 +77,27 @@ void Target::set_simulated(bool simulated) {
   set_physics_process(simulated);
 }
 
-void Target::ApplyState(const Vector3& position, bool dead) {
-  bool respawned = dead_ && !dead;
-  set_global_position(position);
+TargetState Target::CaptureState() const {
+  TargetState state;
+  state.position = get_global_position();
+  state.dead = dead_;
+  return state;
+}
+
+void Target::ApplyState(const TargetState& state) {
+  bool respawned = dead_ && !state.dead;
+  set_global_position(state.position);
   if (respawned) {
     reset_physics_interpolation();
   }
-  if (dead != dead_) {
-    SetDead(dead);
+  if (state.dead != dead_) {
+    SetDead(state.dead);
   }
+}
+
+Node3D* Target::HitboxBody(bool* active) {
+  *active = !dead_;
+  return this;
 }
 
 void Target::SetDead(bool dead) {

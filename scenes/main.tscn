@@ -23,6 +23,8 @@ tonemap_mode = 2
 [node name="Main" type="Main"]
 player_scene = ExtResource("1_player")
 
+[node name="NetSession" type="NetSession" parent="."]
+
 [node name="WorldEnvironment" type="WorldEnvironment" parent="."]
 environment = SubResource("Environment_1")
 

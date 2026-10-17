@@ -10,6 +10,7 @@
 #include "src/hud.h"
 #include "src/impact.h"
 #include "src/main.h"
+#include "src/net/session.h"
 #include "src/target.h"
 #include "src/touch_controls.h"
 #include "src/weapon.h"
@@ -23,6 +24,7 @@ void InitializeFpsModule(godot::ModuleInitializationLevel level) {
   GDREGISTER_RUNTIME_CLASS(godot::Target);
   GDREGISTER_RUNTIME_CLASS(godot::Impact);
   GDREGISTER_RUNTIME_CLASS(godot::Hud);
+  GDREGISTER_RUNTIME_CLASS(godot::net::NetSession);
   GDREGISTER_RUNTIME_CLASS(godot::Main);
   GDREGISTER_RUNTIME_CLASS(godot::TouchControls);
 }

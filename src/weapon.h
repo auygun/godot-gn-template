@@ -58,7 +58,7 @@ class Weapon : public Node3D {
   void Tick(float dt,
             bool fire,
             bool reload_pressed,
-            SimulationMode mode = SimulationMode::kAuthoritative);
+            net::SimulationMode mode = net::SimulationMode::kAuthoritative);
   void Shoot();
   void StartReload();
   // Full magazine and reserve, reload cancelled (respawn).
@@ -159,7 +159,7 @@ class Weapon : public Node3D {
   void UpdatePose(float dt);
   // Fire a shot from the owner's aim. Only an authoritative shot hits;
   // a predicted one plays its effects, a replayed one nothing.
-  void Fire(SimulationMode mode);
+  void Fire(net::SimulationMode mode);
   // A shot's kick, muzzle flash and sound.
   void PlayFireEffects();
   void ShowMuzzleFlash();

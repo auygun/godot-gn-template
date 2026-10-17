@@ -11,13 +11,19 @@ group("default") {
   }
 }
 
+# The game-agnostic netcode (src/net/): it includes nothing of the game's.
+source_set("net") {
+  sources = [ "src/net/lag_compensation.cc" ]
+  deps = [ "//third_party/godot-cpp" ]
+  include_dirs = [ "//" ]
+}
+
 shared_library("extension") {
   sources = [
     "src/client_prediction.cc",
     "src/fps_character.cc",
     "src/hud.cc",
     "src/impact.cc",
-    "src/lag_compensation.cc",
     "src/main.cc",
     "src/net_protocol.cc",
     "src/register_types.cc",
@@ -26,7 +32,10 @@ shared_library("extension") {
     "src/touch_controls.cc",
     "src/weapon.cc",
   ]
-  deps = [ "//third_party/godot-cpp" ]
+  deps = [
+    ":net",
+    "//third_party/godot-cpp",
+  ]
 
   # Includes are relative to the project root ("src/weapon.h").
   include_dirs = [ "//" ]

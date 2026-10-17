@@ -1,5 +1,5 @@
-#ifndef SRC_LAG_COMPENSATION_H_
-#define SRC_LAG_COMPENSATION_H_
+#ifndef SRC_NET_LAG_COMPENSATION_H_
+#define SRC_NET_LAG_COMPENSATION_H_
 
 #include <array>
 #include <cstdint>
@@ -78,4 +78,4 @@ class LagCompensation {
 
 }  // namespace godot
 
-#endif  // SRC_LAG_COMPENSATION_H_
+#endif  // SRC_NET_LAG_COMPENSATION_H_

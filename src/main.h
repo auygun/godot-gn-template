@@ -15,7 +15,7 @@
 #include <godot_cpp/core/gdvirtual.gen.inc>
 
 #include "src/client_prediction.h"
-#include "src/lag_compensation.h"
+#include "src/net/lag_compensation.h"
 #include "src/net_protocol.h"
 #include "src/player_input.h"
 #include "src/snapshot_interpolator.h"

@@ -16,7 +16,6 @@ source_set("net") {
   sources = [
     "src/net/byte_stream.cc",
     "src/net/client_prediction.cc",
-    "src/net/lag_compensation.cc",
     "src/net/protocol.cc",
     "src/net/replicate.cc",
     "src/net/schema.cc",
@@ -32,6 +31,7 @@ shared_library("extension") {
     "src/fps_character.cc",
     "src/hud.cc",
     "src/impact.cc",
+    "src/lag_compensation.cc",
     "src/main.cc",
     "src/register_types.cc",
     "src/target.cc",

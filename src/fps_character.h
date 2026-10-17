@@ -71,7 +71,6 @@ class FpsCharacter : public CharacterBody3D,
   // large one snaps.
   void OnCorrected(const Vector3& error) override;
   Vector3 Position() const override { return get_global_position(); }
-  Node3D* HitboxBody(bool* active) override;
 
   // Back to the spawn transform (or the one given) with full health and
   // ammo and a still camera.

@@ -31,7 +31,6 @@ class Target : public CharacterBody3D, public net::TypedEntity<TargetState> {
   TargetState CaptureState() const override;
   void ApplyState(const TargetState& state) override;
   Vector3 Position() const override { return get_global_position(); }
-  Node3D* HitboxBody(bool* active) override;
 
   float health() const { return health_; }
   bool dead() const { return dead_; }

@@ -43,6 +43,7 @@ void Main::_ready() {
   schema.AddRpc<KillEvent>(nullptr, nullptr);
   schema.AddRpc<DamagedEvent>(&Main::OnDamagedEvent, this);
   session_->set_delegate(this);
+  session_->set_max_rewind_ticks(kMaxRewindTicks);
 
   // The scene's targets, in order: the same ids on every side.
   Node* targets = get_node_or_null("Targets");
@@ -175,6 +176,20 @@ void Main::BeforeServerTick(float dt) {
   }
 }
 
+void Main::AfterServerTick(uint32_t tick) {
+  // After the players moved; targets move in their own _physics_process,
+  // after this, so theirs are a tick old, which is what clients see too
+  // (the snapshot is taken after this).
+  std::vector<LagCompensation::Body> bodies;
+  for (const auto& [peer, player] : players_) {
+    bodies.push_back({player, !player->dead()});
+  }
+  for (Target* target : targets_) {
+    bodies.push_back({target, !target->dead()});
+  }
+  lag_compensation_.Record(tick, bodies);
+}
+
 FpsCharacter* Main::PlayerOf(net::PeerId peer) const {
   auto it = players_.find(peer);
   return it != players_.end() ? it->second : nullptr;
@@ -231,8 +246,17 @@ Node3D* Main::ResolveShot(const Node3D* shooter,
                           float max_distance,
                           Vector3* position,
                           Vector3* normal) {
-  return session_->Raycast(view_tick, origin, direction, max_distance, shooter,
-                           position, normal);
+  Node3D* body = lag_compensation_.Raycast(static_cast<float>(view_tick),
+                                           origin, direction, max_distance,
+                                           shooter, position, normal);
+  // It may have died since (a body is only shot once dead in the past if
+  // it's still alive now).
+  FpsCharacter* player = Object::cast_to<FpsCharacter>(body);
+  Target* target = Object::cast_to<Target>(body);
+  if ((player && player->dead()) || (target && target->dead())) {
+    return nullptr;
+  }
+  return body;
 }
 
 void Main::OnWeaponHit(Object* collider, int64_t peer) {

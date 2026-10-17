@@ -6,11 +6,7 @@
 #include "src/net/replicate.h"
 #include "src/net/types.h"
 
-namespace godot {
-
-class Node3D;
-
-namespace net {
+namespace godot::net {
 
 // A replicated object, usually a node: the NetSession reads and writes its
 // state, simulates it under its owner's commands, and on clients draws it
@@ -47,10 +43,6 @@ class Entity {
   virtual void OnTeleported() {}
   // Where the entity is, for the correction's error.
   virtual Vector3 Position() const { return Vector3(); }
-  // The body shots test against in the past (NetSession::Raycast), with
-  // its hitbox from its CollisionShape3D; null for none. active: whether it
-  // can be hit now (e.g. not dead).
-  virtual Node3D* HitboxBody(bool* active) { return nullptr; }
 
  protected:
   virtual ~Entity() = default;
@@ -82,7 +74,6 @@ class TypedEntity : public Entity {
   void IdleBox(Box* command) const final { *command = Box::Of(IdleInput()); }
 };
 
-}  // namespace net
-}  // namespace godot
+}  // namespace godot::net
 
 #endif  // SRC_NET_ENTITY_H_

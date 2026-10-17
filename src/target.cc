@@ -95,11 +95,6 @@ void Target::ApplyState(const TargetState& state) {
   }
 }
 
-Node3D* Target::HitboxBody(bool* active) {
-  *active = !dead_;
-  return this;
-}
-
 void Target::SetDead(bool dead) {
   dead_ = dead;
   CollisionShape3D* shape =

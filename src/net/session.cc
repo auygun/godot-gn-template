@@ -7,7 +7,6 @@
 #include <godot_cpp/classes/e_net_connection.hpp>
 #include <godot_cpp/classes/e_net_multiplayer_peer.hpp>
 #include <godot_cpp/classes/engine.hpp>
-#include <godot_cpp/classes/node3d.hpp>
 #include <godot_cpp/classes/os.hpp>
 #include <godot_cpp/classes/scene_tree.hpp>
 #include <godot_cpp/classes/time.hpp>
@@ -282,7 +281,7 @@ void NetSession::ServerTick(float dt) {
         command.command,
         {dt, SimulationMode::kAuthoritative, command.view_tick});
   }
-  RecordHitboxes();
+  delegate_->AfterServerTick(tick_);
   if (mode_ != Mode::kOffline && tick_ % kSnapshotInterval == 0) {
     SendSnapshots();
   }
@@ -312,53 +311,14 @@ TimedCommand NetSession::NextCommand(PeerId peer, Entity* entity) {
     }
     command = connection.last_command;
   }
-  // A client sees the bodies in the past, but not further than
-  // kMaxRewindTicks, nor in the future.
+  // A client sees the world in the past, but not further than
+  // max_rewind_ticks_, nor in the future.
   double now = static_cast<double>(tick_ - 1);
-  if (!(command.view_tick >= now - kMaxRewindTicks)) {  // Also NaN.
-    command.view_tick = now - kMaxRewindTicks;
+  if (!(command.view_tick >= now - max_rewind_ticks_)) {  // Also NaN.
+    command.view_tick = now - max_rewind_ticks_;
   }
   command.view_tick = std::min(command.view_tick, now);
   return command;
-}
-
-void NetSession::RecordHitboxes() {
-  // After the owned entities moved; the rest move in their own
-  // _physics_process, after this, so theirs are a tick old, which is what
-  // clients see too (the snapshot is taken here).
-  std::vector<LagCompensation::Body> bodies;
-  for (const auto& [id, record] : entities_) {
-    bool active = true;
-    Node3D* body = record.entity->HitboxBody(&active);
-    if (body) {
-      bodies.push_back({body, active});
-    }
-  }
-  lag_compensation_.Record(tick_, bodies);
-}
-
-Node3D* NetSession::Raycast(double view_tick,
-                            const Vector3& origin,
-                            const Vector3& direction,
-                            float max_distance,
-                            const Node3D* ignore,
-                            Vector3* position,
-                            Vector3* normal) const {
-  Node3D* body = lag_compensation_.Raycast(static_cast<float>(view_tick),
-                                           origin, direction, max_distance,
-                                           ignore, position, normal);
-  if (!body) {
-    return nullptr;
-  }
-  // It may have died since (a body is only hit in the past if it can still
-  // be hit now).
-  for (const auto& [id, record] : entities_) {
-    bool active = true;
-    if (record.entity->HitboxBody(&active) == body) {
-      return active ? body : nullptr;
-    }
-  }
-  return body;
 }
 
 void NetSession::SendSnapshots() {

@@ -9,6 +9,7 @@
 #include <godot_cpp/core/binder_common.hpp>
 #include <godot_cpp/core/gdvirtual.gen.inc>
 
+#include "src/lag_compensation.h"
 #include "src/net/session.h"
 #include "src/weapon.h"
 
@@ -57,6 +58,8 @@ class Main : public Node, public ShotResolver, public net::SessionDelegate {
   void DespawnEntity(net::EntityId id, net::Entity* entity) override;
   void OnPeerJoined(net::PeerId peer) override;
   void BeforeServerTick(float dt) override;
+  // Remember where the shootable bodies are this tick (LagCompensation).
+  void AfterServerTick(uint32_t tick) override;
 
  protected:
   static void _bind_methods();
@@ -64,6 +67,11 @@ class Main : public Node, public ShotResolver, public net::SessionDelegate {
  private:
   // How long a killed player waits to respawn, in seconds.
   static constexpr float kRespawnDelay = 3.0f;
+  // How far in the past a client's shots may be tested, in ticks: its
+  // view's delay (SnapshotInterpolator) plus up to 200 ms of latency. A
+  // client with more lag has to lead its targets. Within LagCompensation's
+  // history.
+  static constexpr double kMaxRewindTicks = 6.0 + 12.0;
 
   // The RPCs: from the server to the client of the player concerned.
   struct HitEvent {  // its shot hit something
@@ -112,6 +120,8 @@ class Main : public Node, public ShotResolver, public net::SessionDelegate {
   std::map<net::PeerId, FpsCharacter*> players_;
   // On the server: seconds until each dead player respawns, by peer id.
   std::map<net::PeerId, float> respawn_timers_;
+  // On the server: the bodies' hitboxes on recent ticks.
+  LagCompensation lag_compensation_;
 };
 
 }  // namespace godot

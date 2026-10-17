@@ -294,11 +294,6 @@ void FpsCharacter::ApplyState(const PlayerState& state) {
   }
 }
 
-Node3D* FpsCharacter::HitboxBody(bool* active) {
-  *active = !dead_;
-  return this;
-}
-
 void FpsCharacter::OnTeleported() {
   reset_physics_interpolation();
   prev_landing_offset_ = landing_offset_;

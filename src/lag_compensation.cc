@@ -1,4 +1,4 @@
-#include "src/net/lag_compensation.h"
+#include "src/lag_compensation.h"
 
 #include <algorithm>
 #include <cmath>

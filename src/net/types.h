@@ -41,7 +41,9 @@ struct SimContext {
   float dt = 0.0f;
   SimulationMode mode = SimulationMode::kAuthoritative;
   // The server tick the commanding client was drawing the world at
-  // (fractional): what its shots are tested against (NetSession::Raycast).
+  // (fractional, at most NetSession::max_rewind_ticks back), for lag
+  // compensation: e.g. test its shots against the world as it was then.
+  // The server's own player's: the last tick.
   double view_tick = 0.0;
 };
 

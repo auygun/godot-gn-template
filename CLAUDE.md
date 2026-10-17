@@ -164,11 +164,15 @@ ninja -C out/android/release          # .so + app.apk (no_apk=true for just the 
   eases across the difference (`Entity::OnCorrected`). Everything else is
   drawn ~100 ms in the past by `SnapshotInterpolator`, blending the
   `kBlend` fields.
-- Lag compensation: each command carries the server tick its client was
-  drawing (`SimContext::view_tick`), and `NetSession::Raycast` tests rays
-  against the bodies' hitboxes as they were then (`LagCompensation`, from
-  each entity's `HitboxBody`, at most `kMaxRewindTicks` back). `Main` is
-  the weapons' `ShotResolver`.
+- Lag compensation is split: the framework only provides the time. Each
+  command carries the server tick its client was drawing
+  (`SimContext::view_tick`, clamped to `set_max_rewind_ticks` back), and
+  `SessionDelegate::AfterServerTick(tick)` runs after each tick's
+  simulation. What is tested at that time is the game's: `Main` records the
+  bodies' hitboxes each tick (`src/lag_compensation.cc`, from their
+  `CollisionShape3D`: capsules and boxes) and is the weapons'
+  `ShotResolver`: the physics ray finds the level, the history the bodies,
+  and the nearer wins. A game with per-bone hitboxes would record those.
 - Only `Simulate`'s inputs and the state struct may affect the outcome, or
   predictions won't match: e.g. floor snapping goes by `on_floor_`, not the
   body's last `move_and_slide`. Anything new in `Simulate` belongs in

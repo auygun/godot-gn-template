@@ -15,7 +15,6 @@
 
 #include "src/net/client_prediction.h"
 #include "src/net/entity.h"
-#include "src/net/lag_compensation.h"
 #include "src/net/protocol.h"
 #include "src/net/schema.h"
 #include "src/net/snapshot_interpolator.h"
@@ -41,8 +40,11 @@ class SessionDelegate {
   // DespawnEntity for each).
   virtual void OnPeerJoined(PeerId peer) {}
   virtual void OnPeerLeft(PeerId peer) {}
-  // On the server, each tick before the commands are simulated.
+  // On the server, each tick before the commands are simulated, and after
+  // (before its snapshot is taken): e.g. to record what lag compensation
+  // tests against, by tick.
   virtual void BeforeServerTick(float dt) {}
+  virtual void AfterServerTick(uint32_t tick) {}
 
  protected:
   virtual ~SessionDelegate() = default;
@@ -111,17 +113,12 @@ class NetSession : public Node {
     SendRpc(peer, Box::Of(payload));
   }
 
-  // On the server: the nearest shootable body (Entity::HitboxBody) the ray
-  // from origin along direction (normalized), at most max_distance long,
-  // hits as the bodies were at view_tick (at most kMaxRewindTicks back);
-  // never ignore. Null if none.
-  Node3D* Raycast(double view_tick,
-                  const Vector3& origin,
-                  const Vector3& direction,
-                  float max_distance,
-                  const Node3D* ignore,
-                  Vector3* position,
-                  Vector3* normal) const;
+  // How far back a client's view tick (SimContext::view_tick) may be, in
+  // ticks: its view's delay (SnapshotInterpolator, 6) plus the latency to
+  // allow for. A client with more lag has to lead its targets. The game's
+  // lag compensation history must cover it.
+  void set_max_rewind_ticks(double ticks) { max_rewind_ticks_ = ticks; }
+  double max_rewind_ticks() const { return max_rewind_ticks_; }
 
   Mode mode() const { return mode_; }
   bool is_server() const { return mode_ != Mode::kClient; }
@@ -140,10 +137,6 @@ class NetSession : public Node {
   static constexpr int kMaxClients = 15;
   // The server sends a snapshot every this many ticks.
   static constexpr uint32_t kSnapshotInterval = 2;
-  // How far in the past a client's shots may be tested, in ticks: its
-  // view's delay (SnapshotInterpolator) plus up to 200 ms of latency. A
-  // client with more lag has to lead its targets.
-  static constexpr double kMaxRewindTicks = 6.0 + 12.0;
   // How far ahead of the next command to simulate the server keeps a
   // client's commands.
   static constexpr uint32_t kMaxQueuedCommands = 32;
@@ -200,7 +193,6 @@ class NetSession : public Node {
   // The command of a client's entity this tick (repeating the last if the
   // next hasn't arrived).
   TimedCommand NextCommand(PeerId peer, Entity* entity);
-  void RecordHitboxes();
   void SendSnapshots();
   void SendInput();
   void SendRpc(PeerId peer, const Box& payload);
@@ -257,7 +249,8 @@ class NetSession : public Node {
   // Server.
   std::map<PeerId, ClientConnection> clients_;
   uint32_t tick_ = 0;
-  LagCompensation lag_compensation_;
+  // 100 ms of view delay plus up to 200 ms of latency, at 60 ticks.
+  double max_rewind_ticks_ = 6.0 + 12.0;
 
   // Client. The newest snapshot, reconciled on the next tick.
   Snapshot snapshot_;

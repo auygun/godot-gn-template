@@ -98,6 +98,8 @@ class NetSession : public Node {
   // of a registered type (by class, or a plain node type's scene), in tree
   // order, outside the types' spawn parents. Every side loads the same
   // scene, so they get the same ids; peers compare them when they connect.
+  // Nodes of other types are local to each machine: the session neither
+  // replicates nor simulates them.
   bool Start();
 
   // On the server: instantiate the type's scene at transform under its

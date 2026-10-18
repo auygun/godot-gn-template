@@ -8,14 +8,16 @@
 
 namespace godot::net {
 
-// A replicated object, usually a node: the NetSession reads and writes its
-// state, simulates it under its owner's commands, and on clients draws it
-// from the server's snapshots. Games derive from TypedEntity, which
-// unwraps the boxes.
+// A replicated object the server has authority over, usually a node: the
+// NetSession reads and writes its state, simulates it under its owner's
+// commands, and on clients draws it from the server's snapshots. Games
+// derive from TypedEntity, which unwraps the boxes.
 //
 // The server spawns entities (NetSession::Spawn), and clients instantiate
 // the same scenes from the snapshots. Entities placed in the scene are
-// found by NetSession::Start on every side.
+// found by NetSession::Start on every side. Being an entity goes by type:
+// nodes of types that aren't registered (e.g. a client's particle effects)
+// are local to each machine, and the session leaves them alone.
 class Entity {
  public:
   // The game state: everything Simulate reads and writes (of the struct
@@ -35,8 +37,8 @@ class Entity {
   // simulate meanwhile (e.g. standing still, looking where it faces).
   virtual void IdleBox(Box* command) const = 0;
 
-  // On a client, for every entity it has (spawned or the scene's): the
-  // server simulates it, and the client only draws the states it sends
+  // On a client, for every entity it has (spawned or the scene's), as the
+  // server simulates them all: the client only draws the states it sends
   // (e.g. turn off its own _physics_process). Its own entity is still
   // predicted (Simulate).
   virtual void OnRemoteAuthority() {}

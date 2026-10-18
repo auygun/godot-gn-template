@@ -152,9 +152,11 @@ ninja -C out/android/release          # .so + app.apk (no_apk=true for just the 
   node under `Main` of a registered type (by class, or a plain node type's
   scene), in tree order, outside the spawn parents. The ids match because
   every side loads the same scene; their paths are part of the hash checked
-  on connecting. On clients every entity gets `Entity::OnRemoteAuthority`
-  (e.g. `Target` stops its own `_physics_process`; `NodeEntity` freezes
-  physics bodies).
+  on connecting. Entities are the server's: on clients every one gets
+  `Entity::OnRemoteAuthority` (e.g. `Target` stops its own
+  `_physics_process`; `NodeEntity` freezes physics bodies). Nodes of types
+  that aren't registered (a client's particle emitter) are local to each
+  machine: the session leaves them alone.
 - `NetSession::_physics_process` runs before every other node's. The server
   calls `Simulate` on each owned entity with its owner's command: the local
   player's `GatherInput()`, or the client's queued commands by sequence

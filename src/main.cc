@@ -35,9 +35,10 @@ void Main::_ready() {
   schema.SetCommand<PlayerInput>();
   player_type_ = schema.AddEntityType<FpsCharacter, PlayerState>(
       player_scene_, NodePath("Players"));
-  target_type_ = schema.AddEntityType<Target, TargetState>();
+  net::TypeId target_type = schema.AddEntityType<Target, TargetState>();
+  net::TypeId crate_type = 0;
   if (crate_scene_.is_valid()) {
-    crate_type_ = schema.AddNodeType(crate_scene_, NodePath("Props"));
+    crate_type = schema.AddNodeType(crate_scene_, NodePath("Props"));
   }
   schema.AddRpc<HitEvent>(&Main::OnHitEvent, this);
   schema.AddRpc<KillEvent>(nullptr, nullptr);
@@ -52,7 +53,7 @@ void Main::_ready() {
       Target* target = Object::cast_to<Target>(targets->get_child(i));
       if (target) {
         targets_.push_back(target);
-        session_->AddSceneEntity(target, target_type_);
+        session_->AddSceneEntity(target, target_type);
       }
     }
   }
@@ -85,7 +86,7 @@ void Main::_ready() {
     Transform3D spawn = spawn_points_[0]->get_global_transform();
     for (int i = 0; i < kCrateCount; i++) {
       Vector3 offset(-1.5f + (i % 2) * 1.2f, 0.6f + (i / 2) * 1.3f, -4.0f);
-      session_->Spawn(crate_type_, net::kNoOwner,
+      session_->Spawn(crate_type, net::kNoOwner,
                       Transform3D(spawn.basis, spawn.xform(offset)));
     }
   }

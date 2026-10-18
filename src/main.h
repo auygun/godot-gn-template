@@ -119,8 +119,6 @@ class Main : public Node, public ShotResolver, public net::SessionDelegate {
   Ref<PackedScene> crate_scene_;
   net::NetSession* session_ = nullptr;
   net::TypeId player_type_ = 0;
-  net::TypeId target_type_ = 0;
-  net::TypeId crate_type_ = 0;
   Hud* hud_ = nullptr;
   std::vector<Target*> targets_;
   std::vector<Node3D*> spawn_points_;

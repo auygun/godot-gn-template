@@ -32,10 +32,11 @@ class FpsCharacter : public CharacterBody3D,
   void _process(double delta) override;
   void _unhandled_input(const Ref<InputEvent>& event) override;
 
-  // Whether the player at this machine controls this character (the
-  // default). Set before adding it to the tree: other players' characters
-  // drop their camera and touch controls, and take no local input.
-  void set_local(bool local);
+  // Named after its owner, and whether the player at this machine
+  // controls this character (the default until spawned): other players'
+  // characters drop their camera and touch controls, and take no local
+  // input.
+  void OnSpawning(net::PeerId owner, bool local) override;
   bool is_local() const { return local_; }
 
   // Advance the game state by one physics tick under the given command:

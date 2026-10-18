@@ -146,9 +146,11 @@ ninja -C out/android/release          # .so + app.apk (no_apk=true for just the 
   physics bodies are frozen kinematic on clients). The server calls
   `NetSession::Spawn(type, owner, transform)` / `Despawn(node)`; clients
   instantiate and free the same scenes as entities appear in and leave the
-  snapshots. `SessionDelegate::OnSpawning` (before the node enters the tree,
-  e.g. `set_local`) and `OnSpawned` (after its `_ready`, e.g. signals) run
-  on every side. Entities placed in the scene are found by `Start()`: every
+  snapshots. On every side, before a spawned node enters the tree, the
+  entity gets `Entity::OnSpawning(owner, local)` (`FpsCharacter` takes its
+  owner's name, and keeps its camera only if this machine owns it) and the
+  game `SessionDelegate::OnSpawning`; after its `_ready`, both get
+  `OnSpawned` (the game's e.g. connects signals). Entities placed in the scene are found by `Start()`: every
   node under `Main` of a registered type (by class, or a plain node type's
   scene), in tree order, outside the spawn parents. The ids match because
   every side loads the same scene; their paths are part of the hash checked
@@ -196,7 +198,7 @@ ninja -C out/android/release          # .so + app.apk (no_apk=true for just the 
 
 ## The game (`src/main.cc`, `src/fps_character.cc`, ...)
 
-- Characters that aren't the local player's (`set_local(false)`) drop their
+- Characters that aren't the local player's (`OnSpawning(owner, false)`) drop their
   camera and touch controls, and their weapon stays on the body.
 - Physics layer 4 `player`: players don't collide with each other, shots
   hit them.

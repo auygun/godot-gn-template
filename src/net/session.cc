@@ -257,6 +257,7 @@ Node* NetSession::Spawn(TypeId type,
                                     type));
   }
   EntityId id = next_id_++;
+  record.entity->OnSpawning(owner, owner != kNoOwner && owner == local_peer_);
   delegate_->OnSpawning(node, id, type, owner);
   AddToTree(node, type);
   entities_[id] = std::move(record);
@@ -584,6 +585,8 @@ Entity* NetSession::SpawnFromSnapshot(const SnapshotEntity& entry) {
     return nullptr;
   }
   Entity* entity = record.entity;
+  entity->OnSpawning(entry.owner,
+                     entry.owner != kNoOwner && entry.owner == local_peer_);
   delegate_->OnSpawning(node, entry.id, entry.type, entry.owner);
   AddToTree(node, entry.type);
   entities_[entry.id] = std::move(record);

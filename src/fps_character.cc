@@ -64,8 +64,8 @@ void FpsCharacter::_ready() {
   Input::get_singleton()->set_mouse_mode(Input::MOUSE_MODE_CAPTURED);
 }
 
-void FpsCharacter::set_local(bool local) {
-  ERR_FAIL_COND_MSG(is_inside_tree(), "set_local() before adding to the tree");
+void FpsCharacter::OnSpawning(net::PeerId owner, bool local) {
+  set_name(vformat("Player%d", owner));
   local_ = local;
   if (local_) {
     return;

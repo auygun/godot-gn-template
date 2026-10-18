@@ -83,19 +83,6 @@ void Main::_physics_process(double delta) {
   UpdateHud();
 }
 
-void Main::OnSpawning(Node* node,
-                      net::EntityId id,
-                      net::TypeId type,
-                      net::PeerId owner) {
-  FpsCharacter* player = Object::cast_to<FpsCharacter>(node);
-  if (type != player_type_ || !player) {
-    return;
-  }
-  player->set_name(vformat("Player%d", owner));
-  // Other players' characters drop their camera before entering the tree.
-  player->set_local(owner == session_->local_peer());
-}
-
 void Main::OnSpawned(Node* node,
                      net::EntityId id,
                      net::TypeId type,

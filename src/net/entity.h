@@ -37,6 +37,10 @@ class Entity {
   // simulate meanwhile (e.g. standing still, looking where it faces).
   virtual void IdleBox(Box* command) const = 0;
 
+  // A spawned entity (not the scene's), on every side, before it enters
+  // the tree: its owner (kNoOwner: none), and whether that is this
+  // machine, gathering its commands (e.g. keep a camera only then).
+  virtual void OnSpawning(PeerId owner, bool local) {}
   // On a client, for every entity it has (spawned or the scene's), as the
   // server simulates them all: the client only draws the states it sends
   // (e.g. turn off its own _physics_process). Its own entity is still

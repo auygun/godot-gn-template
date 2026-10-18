@@ -54,10 +54,6 @@ class Main : public Node, public ShotResolver, public net::SessionDelegate {
                       Vector3* normal) override;
 
   // net::SessionDelegate.
-  void OnSpawning(Node* node,
-                  net::EntityId id,
-                  net::TypeId type,
-                  net::PeerId owner) override;
   void OnSpawned(Node* node,
                  net::EntityId id,
                  net::TypeId type,

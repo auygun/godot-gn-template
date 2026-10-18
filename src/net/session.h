@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <deque>
 #include <map>
+#include <memory>
 #include <vector>
 
 #include <godot_cpp/classes/multiplayer_peer.hpp>
@@ -15,6 +16,7 @@
 
 #include "src/net/client_prediction.h"
 #include "src/net/entity.h"
+#include "src/net/node_entity.h"
 #include "src/net/protocol.h"
 #include "src/net/schema.h"
 #include "src/net/snapshot_interpolator.h"
@@ -22,22 +24,22 @@
 
 namespace godot::net {
 
-// What the game does for the session.
+// What the game does for the session; all optional.
 class SessionDelegate {
  public:
-  // On a client: an entity the server has and this client doesn't yet,
-  // with its first state (as this client receives it). Returns it, or null
-  // if it can't (the session asks again with the next snapshot).
-  virtual Entity* SpawnEntity(EntityId id,
-                              TypeId type,
-                              PeerId owner,
-                              const Box& state) = 0;
-  // On a client: the server no longer has it. On the server, after
-  // NetSession::RemoveEntity. The session forgets it right after.
-  virtual void DespawnEntity(EntityId id, Entity* entity) = 0;
+  // A spawned entity's node (NetSession::Spawn on the server; from a
+  // snapshot on a client), on every side: before it enters the tree (e.g.
+  // to tell it whether it is this machine's player), and after (its _ready
+  // has run: e.g. to connect its signals). A client applies its first state
+  // after both.
+  virtual void OnSpawning(Node* node, EntityId id, TypeId type, PeerId owner) {}
+  virtual void OnSpawned(Node* node, EntityId id, TypeId type, PeerId owner) {}
+  // A spawned entity is going (on the server after NetSession::Despawn, or
+  // its owner leaving; on a client, when the server no longer has it): the
+  // session frees the node right after.
+  virtual void OnDespawned(Node* node, EntityId id) {}
   // On the server: a client connected (with the same Schema), or left. The
-  // session removes the entities it owned after OnPeerLeft (calling
-  // DespawnEntity for each).
+  // session despawns the entities it owned after OnPeerLeft.
   virtual void OnPeerJoined(PeerId peer) {}
   virtual void OnPeerLeft(PeerId peer) {}
   // On the server, each tick before the commands are simulated, and after
@@ -92,18 +94,23 @@ class NetSession : public Node {
   // an error printed) on failure: the game should quit.
   bool Start();
 
-  // On the server, or on every side for an entity placed in the scene
-  // (registered in the same order on each, before Start): a new entity.
+  // On the server: instantiate the type's scene at transform under its
+  // parent, and replicate it to every client, which instantiates it too.
   // owner: the peer whose commands it is simulated with (kNoOwner: none,
-  // it simulates itself). Returns its id.
-  EntityId AddEntity(Entity* entity, TypeId type, PeerId owner);
-  // On the server: the entity is gone (the delegate's DespawnEntity is
-  // called).
-  void RemoveEntity(EntityId id);
-  Entity* FindEntity(EntityId id) const;
+  // it simulates itself). Returns the node, or null.
+  Node* Spawn(TypeId type, PeerId owner, const Transform3D& transform);
+  // On the server: remove a spawned entity everywhere, freeing its node.
+  void Despawn(Node* node);
+  // On every side, before Start, in the same order: an entity placed in
+  // the scene (node: its Entity's node, or any Node3D for a plain node
+  // type). Returns its id.
+  EntityId AddSceneEntity(Node* node, TypeId type);
+
+  // A spawned or scene entity's node, id and owner (null/0/kNoOwner if it
+  // isn't one).
+  Node* FindNode(EntityId id) const;
+  EntityId IdOf(const Node* node) const;
   PeerId OwnerOf(EntityId id) const;
-  // The id of a registered entity, or 0.
-  EntityId IdOf(const Entity* entity) const;
 
   // A reliable message to peer (on the server: kServerPeerId for its own
   // player, handled right away; on a client, the server). Its payload type
@@ -151,10 +158,26 @@ class NetSession : public Node {
   static constexpr float kNetStatsInterval = 5.0f;
 
   struct EntityRecord {
+    Node* node = nullptr;
     Entity* entity = nullptr;
     TypeId type = 0;
     PeerId owner = kNoOwner;
+    // A plain node's adapter (entity points at it).
+    std::shared_ptr<NodeEntity> adapter;
+    // Placed in the scene, not spawned: never freed by the session.
+    bool scene = false;
   };
+
+  // The record for a node of the type (with its Entity, or an adapter);
+  // false if the node isn't of the type.
+  bool MakeRecord(Node* node, TypeId type, PeerId owner, EntityRecord* record);
+  // Instantiate the type's scene at transform (before it enters the tree);
+  // null if it can't.
+  Node* Instantiate(TypeId type, const Transform3D& transform);
+  // Add a spawned node under its type's parent.
+  bool AddToTree(Node* node, TypeId type);
+  // Unregister the entity and, if it was spawned, free its node.
+  void Remove(EntityId id);
 
   // On the server, per client. Each tick simulates the client's next
   // command by sequence number; if it hasn't arrived, the last command
@@ -200,7 +223,6 @@ class NetSession : public Node {
   void ApplyRemote(const Snapshot& snapshot);
   // On a client: an entity of the snapshot it doesn't have yet.
   Entity* SpawnFromSnapshot(const SnapshotEntity& entry);
-  void Despawn(EntityId id);
   // send_bytes through the simulated lag and loss.
   void Send(const PackedByteArray& bytes,
             PeerId peer,
@@ -241,8 +263,9 @@ class NetSession : public Node {
 
   // By id, ascending.
   std::map<EntityId, EntityRecord> entities_;
-  // Ids up to this one are the scene's (the same on every side).
   EntityId next_id_ = 1;
+  // Ids below this are the scene's (the same on every side).
+  EntityId first_spawned_id_ = 1;
 
   std::array<Snapshot, kSnapshotHistory> snapshot_history_;
 

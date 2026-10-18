@@ -7,6 +7,7 @@
 #include <godot_cpp/classes/e_net_connection.hpp>
 #include <godot_cpp/classes/e_net_multiplayer_peer.hpp>
 #include <godot_cpp/classes/engine.hpp>
+#include <godot_cpp/classes/node3d.hpp>
 #include <godot_cpp/classes/os.hpp>
 #include <godot_cpp/classes/scene_tree.hpp>
 #include <godot_cpp/classes/time.hpp>
@@ -182,37 +183,114 @@ void NetSession::_exit_tree() {
   }
 }
 
-EntityId NetSession::AddEntity(Entity* entity, TypeId type, PeerId owner) {
-  ERR_FAIL_COND_V_MSG(!schema_.entity_type(type), 0,
-                      "NetSession: unknown entity type");
-  ERR_FAIL_COND_V_MSG(started_ && !is_server(), 0,
+bool NetSession::MakeRecord(Node* node,
+                            TypeId type,
+                            PeerId owner,
+                            EntityRecord* record) {
+  if (!node || !schema_.entity_type(type)) {
+    return false;
+  }
+  record->node = node;
+  record->type = type;
+  record->owner = owner;
+  EntityCast cast = schema_.entity_cast(type);
+  if (cast) {
+    record->entity = cast(node);
+  } else if (Node3D* node3d = Object::cast_to<Node3D>(node)) {
+    record->adapter = std::make_shared<NodeEntity>(node3d, is_server());
+    record->entity = record->adapter.get();
+  }
+  return record->entity != nullptr;
+}
+
+Node* NetSession::Instantiate(TypeId type, const Transform3D& transform) {
+  Ref<PackedScene> scene =
+      schema_.entity_type(type) ? schema_.entity_scene(type) : nullptr;
+  ERR_FAIL_COND_V_MSG(scene.is_null(), nullptr,
+                      vformat("NetSession: entity type %d has no scene", type));
+  Node* node = scene->instantiate();
+  ERR_FAIL_NULL_V(node, nullptr);
+  // Before entering the tree, where nodes take their spawn transform.
+  if (Node3D* node3d = Object::cast_to<Node3D>(node)) {
+    node3d->set_transform(transform);
+  }
+  return node;
+}
+
+bool NetSession::AddToTree(Node* node, TypeId type) {
+  Node* base = get_parent() ? get_parent() : this;
+  Node* parent = base->get_node_or_null(schema_.entity_parent(type));
+  if (!parent) {
+    parent = base;
+  }
+  parent->add_child(node);
+  return true;
+}
+
+Node* NetSession::Spawn(TypeId type,
+                        PeerId owner,
+                        const Transform3D& transform) {
+  ERR_FAIL_COND_V_MSG(!is_server(), nullptr,
                       "NetSession: clients get entities from the server");
+  Node* node = Instantiate(type, transform);
+  EntityRecord record;
+  if (!MakeRecord(node, type, owner, &record)) {
+    if (node) {
+      memdelete(node);
+    }
+    ERR_FAIL_V_MSG(nullptr, vformat("NetSession: the scene of entity type %d "
+                                    "isn't one of its entities",
+                                    type));
+  }
   EntityId id = next_id_++;
-  entities_[id] = {entity, type, owner};
+  delegate_->OnSpawning(node, id, type, owner);
+  AddToTree(node, type);
+  entities_[id] = std::move(record);
+  delegate_->OnSpawned(node, id, type, owner);
+  return node;
+}
+
+void NetSession::Despawn(Node* node) {
+  ERR_FAIL_COND_MSG(!is_server(), "NetSession: only the server despawns");
+  EntityId id = IdOf(node);
+  ERR_FAIL_COND_MSG(id == 0 || entities_[id].scene,
+                    "NetSession: not a spawned entity");
+  Remove(id);
+}
+
+EntityId NetSession::AddSceneEntity(Node* node, TypeId type) {
+  ERR_FAIL_COND_V_MSG(started_, 0,
+                      "NetSession: scene entities are added before Start");
+  EntityRecord record;
+  ERR_FAIL_COND_V_MSG(!MakeRecord(node, type, kNoOwner, &record), 0,
+                      "NetSession: not an entity of the type");
+  record.scene = true;
+  EntityId id = next_id_++;
+  first_spawned_id_ = next_id_;
+  entities_[id] = std::move(record);
   return id;
 }
 
-void NetSession::RemoveEntity(EntityId id) {
-  ERR_FAIL_COND_MSG(!is_server(), "NetSession: only the server removes");
-  Despawn(id);
-}
-
-void NetSession::Despawn(EntityId id) {
+void NetSession::Remove(EntityId id) {
   auto it = entities_.find(id);
   if (it == entities_.end()) {
     return;
   }
-  Entity* entity = it->second.entity;
+  EntityRecord record = std::move(it->second);
   entities_.erase(it);
   if (id == own_entity_) {
     own_entity_ = 0;
   }
-  delegate_->DespawnEntity(id, entity);
+  if (record.scene) {
+    return;
+  }
+  delegate_->OnDespawned(record.node, id);
+  record.node->queue_free();
 }
 
-Entity* NetSession::FindEntity(EntityId id) const {
+Node* NetSession::FindNode(EntityId id) const {
   auto it = entities_.find(id);
-  return it != entities_.end() ? it->second.entity : nullptr;
+  return it != entities_.end() ? it->second.node : nullptr;
 }
 
 PeerId NetSession::OwnerOf(EntityId id) const {
@@ -220,9 +298,9 @@ PeerId NetSession::OwnerOf(EntityId id) const {
   return it != entities_.end() ? it->second.owner : kNoOwner;
 }
 
-EntityId NetSession::IdOf(const Entity* entity) const {
+EntityId NetSession::IdOf(const Node* node) const {
   for (const auto& [id, record] : entities_) {
-    if (record.entity == entity) {
+    if (record.node == node) {
       return id;
     }
   }
@@ -256,17 +334,19 @@ void NetSession::_physics_process(double delta) {
 void NetSession::ServerTick(float dt) {
   tick_++;
   delegate_->BeforeServerTick(dt);
-  // A copy: simulating may remove entities (and add them).
-  std::vector<std::pair<EntityId, EntityRecord>> owned;
+  // The ids first: simulating may despawn entities (and spawn them).
+  std::vector<EntityId> owned;
   for (const auto& [id, record] : entities_) {
     if (record.owner != kNoOwner) {
-      owned.emplace_back(id, record);
+      owned.push_back(id);
     }
   }
-  for (const auto& [id, record] : owned) {
-    if (!entities_.count(id)) {
+  for (EntityId id : owned) {
+    auto it = entities_.find(id);
+    if (it == entities_.end()) {
       continue;
     }
+    const EntityRecord& record = it->second;
     if (record.owner == local_peer_) {
       // The server's own player sees the bodies as they are (as of the
       // last tick).
@@ -418,10 +498,11 @@ void NetSession::ClientTick(float dt) {
     ApplyRemote(state);
   }
 
-  Entity* own = FindEntity(own_entity_);
-  if (!own) {
+  auto own_record = entities_.find(own_entity_);
+  if (own_record == entities_.end()) {
     return;
   }
+  Entity* own = own_record->second.entity;
   // Our own entity moves now, under the command the server will get.
   TimedCommand command;
   own->GatherBox(&command.command);
@@ -436,12 +517,24 @@ void NetSession::ClientTick(float dt) {
 }
 
 Entity* NetSession::SpawnFromSnapshot(const SnapshotEntity& entry) {
-  Entity* entity =
-      delegate_->SpawnEntity(entry.id, entry.type, entry.owner, entry.state);
-  if (!entity) {
+  // Where the server has it, if its state says (a plain node's does).
+  Transform3D transform;
+  if (const NodeState* state = entry.state.Get<NodeState>()) {
+    transform = Transform3D(Basis(state->rotation), state->position);
+  }
+  Node* node = Instantiate(entry.type, transform);
+  EntityRecord record;
+  if (!MakeRecord(node, entry.type, entry.owner, &record)) {
+    if (node) {
+      memdelete(node);
+    }
     return nullptr;
   }
-  entities_[entry.id] = {entity, entry.type, entry.owner};
+  Entity* entity = record.entity;
+  delegate_->OnSpawning(node, entry.id, entry.type, entry.owner);
+  AddToTree(node, entry.type);
+  entities_[entry.id] = std::move(record);
+  delegate_->OnSpawned(node, entry.id, entry.type, entry.owner);
   entity->ApplyBox(entry.state);
   return entity;
 }
@@ -457,11 +550,12 @@ void NetSession::ReconcileOwned(const Snapshot& snapshot, float dt) {
   }
   if (!own) {
     if (own_entity_ != 0) {
-      Despawn(own_entity_);
+      Remove(own_entity_);
     }
     return;
   }
-  Entity* entity = FindEntity(own->id);
+  auto it = entities_.find(own->id);
+  Entity* entity = it != entities_.end() ? it->second.entity : nullptr;
   if (!entity) {
     entity = SpawnFromSnapshot(*own);
     if (!entity) {
@@ -495,13 +589,13 @@ void NetSession::ApplyRemote(const Snapshot& snapshot) {
   // the newest snapshot).
   std::vector<EntityId> gone;
   for (const auto& [id, record] : entities_) {
-    if (!present.count(id) && id != own_entity_ &&
-        record.owner != local_peer_ && id >= next_id_) {
+    if (!present.count(id) && !record.scene && id != own_entity_ &&
+        record.owner != local_peer_) {
       gone.push_back(id);
     }
   }
   for (EntityId id : gone) {
-    Despawn(id);
+    Remove(id);
   }
 }
 
@@ -620,7 +714,7 @@ void NetSession::OnPeerDisconnected(int64_t peer_id) {
     }
   }
   for (EntityId id : owned) {
-    Despawn(id);
+    Remove(id);
   }
 }
 

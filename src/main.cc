@@ -20,10 +20,6 @@ Main::~Main() = default;
 
 void Main::_ready() {
   hud_ = Object::cast_to<Hud>(get_node_or_null("Hud"));
-  players_root_ = get_node_or_null("Players");
-  if (!players_root_) {
-    players_root_ = this;
-  }
   session_ = Object::cast_to<net::NetSession>(get_node_or_null("NetSession"));
   if (!session_) {
     UtilityFunctions::push_error("Main: no NetSession child");
@@ -37,8 +33,12 @@ void Main::_ready() {
   // What the game replicates; the same on every side.
   net::Schema& schema = session_->schema();
   schema.SetCommand<PlayerInput>();
-  player_type_ = schema.AddEntityType<PlayerState>();
-  target_type_ = schema.AddEntityType<TargetState>();
+  player_type_ = schema.AddEntityType<FpsCharacter, PlayerState>(
+      player_scene_, NodePath("Players"));
+  target_type_ = schema.AddEntityType<Target, TargetState>();
+  if (crate_scene_.is_valid()) {
+    crate_type_ = schema.AddNodeType(crate_scene_, NodePath("Props"));
+  }
   schema.AddRpc<HitEvent>(&Main::OnHitEvent, this);
   schema.AddRpc<KillEvent>(nullptr, nullptr);
   schema.AddRpc<DamagedEvent>(&Main::OnDamagedEvent, this);
@@ -52,7 +52,7 @@ void Main::_ready() {
       Target* target = Object::cast_to<Target>(targets->get_child(i));
       if (target) {
         targets_.push_back(target);
-        session_->AddEntity(target, target_type_, net::kNoOwner);
+        session_->AddSceneEntity(target, target_type_);
       }
     }
   }
@@ -75,11 +75,18 @@ void Main::_ready() {
     for (Target* target : targets_) {
       target->set_simulated(false);
     }
-  } else if (session_->has_local_player()) {
-    FpsCharacter* player =
-        SpawnPlayer(net::kServerPeerId, NextSpawnTransform());
-    if (player) {
-      session_->AddEntity(player, player_type_, net::kServerPeerId);
+    return;
+  }
+  if (session_->has_local_player()) {
+    session_->Spawn(player_type_, net::kServerPeerId, NextSpawnTransform());
+  }
+  if (crate_scene_.is_valid() && !spawn_points_.empty()) {
+    // Stacked a little ahead of the first spawn point, falling into place.
+    Transform3D spawn = spawn_points_[0]->get_global_transform();
+    for (int i = 0; i < kCrateCount; i++) {
+      Vector3 offset(-1.5f + (i % 2) * 1.2f, 0.6f + (i / 2) * 1.3f, -4.0f);
+      session_->Spawn(crate_type_, net::kNoOwner,
+                      Transform3D(spawn.basis, spawn.xform(offset)));
     }
   }
 }
@@ -89,60 +96,53 @@ void Main::_physics_process(double delta) {
   UpdateHud();
 }
 
-FpsCharacter* Main::SpawnPlayer(net::PeerId peer,
-                                const Transform3D& transform) {
-  FpsCharacter* player =
-      Object::cast_to<FpsCharacter>(player_scene_->instantiate());
-  if (!player) {
-    UtilityFunctions::push_error("Main: player_scene isn't an FpsCharacter");
-    return nullptr;
+void Main::OnSpawning(Node* node,
+                      net::EntityId id,
+                      net::TypeId type,
+                      net::PeerId owner) {
+  FpsCharacter* player = Object::cast_to<FpsCharacter>(node);
+  if (type != player_type_ || !player) {
+    return;
   }
-  bool local = peer == session_->local_peer();
-  player->set_name(vformat("Player%d", peer));
-  player->set_local(local);
-  // Before entering the tree, where it takes this as its spawn.
-  player->set_transform(transform);
-  players_root_->add_child(player);
-  players_[peer] = player;
+  player->set_name(vformat("Player%d", owner));
+  // Other players' characters drop their camera before entering the tree.
+  player->set_local(owner == session_->local_peer());
+}
+
+void Main::OnSpawned(Node* node,
+                     net::EntityId id,
+                     net::TypeId type,
+                     net::PeerId owner) {
+  FpsCharacter* player = Object::cast_to<FpsCharacter>(node);
+  if (type != player_type_ || !player) {
+    return;
+  }
+  bool local = owner == session_->local_peer();
+  players_[owner] = player;
 
   Weapon* weapon = player->weapon();
   if (session_->is_server()) {
     if (weapon) {
       weapon->SetShotResolver(this);
-      weapon->connect("hit", callable_mp(this, &Main::OnWeaponHit).bind(peer));
+      weapon->connect("hit", callable_mp(this, &Main::OnWeaponHit).bind(owner));
       weapon->connect("killed",
-                      callable_mp(this, &Main::OnWeaponKilled).bind(peer));
+                      callable_mp(this, &Main::OnWeaponKilled).bind(owner));
     }
     player->connect("damaged",
-                    callable_mp(this, &Main::OnPlayerDamaged).bind(peer));
+                    callable_mp(this, &Main::OnPlayerDamaged).bind(owner));
   }
   if (local) {
     if (weapon) {
       weapon->connect("ammo_changed", callable_mp(this, &Main::OnAmmoChanged));
       OnAmmoChanged(weapon->ammo(), weapon->reserve_ammo(), false);
     }
-    UtilityFunctions::print(vformat("Main: spawned local player %d", peer));
+    UtilityFunctions::print(vformat("Main: spawned local player %d", owner));
   }
-  return player;
 }
 
-net::Entity* Main::SpawnEntity(net::EntityId id,
-                               net::TypeId type,
-                               net::PeerId owner,
-                               const net::Box& state) {
-  const PlayerState* player_state = state.Get<PlayerState>();
-  if (type != player_type_ || !player_state || players_.count(owner)) {
-    return nullptr;
-  }
-  return SpawnPlayer(
-      owner, Transform3D(Basis(Vector3(0.0f, 1.0f, 0.0f), player_state->yaw),
-                         player_state->position));
-}
-
-void Main::DespawnEntity(net::EntityId id, net::Entity* entity) {
+void Main::OnDespawned(Node* node, net::EntityId id) {
   for (auto it = players_.begin(); it != players_.end(); ++it) {
-    if (it->second == entity) {
-      it->second->queue_free();
+    if (it->second == node) {
       respawn_timers_.erase(it->first);
       players_.erase(it);
       return;
@@ -151,10 +151,7 @@ void Main::DespawnEntity(net::EntityId id, net::Entity* entity) {
 }
 
 void Main::OnPeerJoined(net::PeerId peer) {
-  FpsCharacter* player = SpawnPlayer(peer, NextSpawnTransform());
-  if (player) {
-    session_->AddEntity(player, player_type_, peer);
-  }
+  session_->Spawn(player_type_, peer, NextSpawnTransform());
 }
 
 void Main::BeforeServerTick(float dt) {
@@ -330,6 +327,12 @@ void Main::_bind_methods() {
   ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "player_scene",
                             PROPERTY_HINT_RESOURCE_TYPE, "PackedScene"),
                "set_player_scene", "get_player_scene");
+  ClassDB::bind_method(D_METHOD("set_crate_scene", "scene"),
+                       &Main::set_crate_scene);
+  ClassDB::bind_method(D_METHOD("get_crate_scene"), &Main::crate_scene);
+  ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "crate_scene",
+                            PROPERTY_HINT_RESOURCE_TYPE, "PackedScene"),
+               "set_crate_scene", "get_crate_scene");
 }
 
 }  // namespace godot

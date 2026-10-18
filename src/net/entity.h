@@ -13,9 +13,9 @@ namespace godot::net {
 // from the server's snapshots. Games derive from TypedEntity, which
 // unwraps the boxes.
 //
-// The server registers each entity (NetSession::AddEntity); clients get
-// them from the snapshots (SessionDelegate::SpawnEntity), but for those
-// placed in the scene, which every side registers in the same order.
+// The server spawns entities (NetSession::Spawn), and clients instantiate
+// the same scenes from the snapshots; entities placed in the scene are
+// registered on every side in the same order (NetSession::AddSceneEntity).
 class Entity {
  public:
   // The game state: everything Simulate reads and writes (of the struct

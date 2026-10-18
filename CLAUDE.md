@@ -123,7 +123,7 @@ ninja -C out/android/release          # .so + app.apk (no_apk=true for just the 
   command, RPC payloads) has a `template <class V> void Replicate(V& v)`
   listing its fields once: `v(field, codec, flags)`. Codecs (`replicate.h`):
   `Exact(tolerance)`, `Position` (2 mm), `Angle`/`Pitch` (16 bits), `Unit`
-  (8 bits), `LowByte`. Flags: `kOwner`/`kOthers`/`kAll` (who gets it; the
+  (8 bits), `Rotation` (quaternion, 6 bytes), `LowByte`. Flags: `kOwner`/`kOthers`/`kAll` (who gets it; the
   owner always exact, others through the codec), `kPredicted` (compared by
   reconciliation, within the codec's tolerance), `kServer` (only the server
   changes it: a difference restores the server's state without counting a
@@ -133,18 +133,23 @@ ninja -C out/android/release          # .so + app.apk (no_apk=true for just the 
   debug round-trip check are all generated from it. Structs must be
   trivially copyable (`<= kMaxStateSize`).
 - `Main::_ready` registers the `Schema`: `SetCommand<PlayerInput>()`,
-  `AddEntityType<PlayerState>()`, `AddEntityType<TargetState>()`,
-  `AddRpc<HitEvent>(handler)`, ... in the same order on every side. Clients
-  send the schema's hash on connecting and a mismatch is rejected, so there
-  is no protocol version to bump; `kWireVersion` only covers the
-  framework's own format.
-- Entities: game nodes derive from `net::TypedEntity<State, Command>`
-  (`entity.h`) and implement `CaptureState`, `RestoreState`, `ApplyState`
-  (restore plus effects, e.g. a shot when `shot_count` changes), `Simulate`
-  and `GatherInput`. The server adds them with `NetSession::AddEntity(entity,
-  type, owner)`; scene entities (the targets) are added in the same order on
-  every side before `Start()`. Clients get the rest from snapshots through
-  `SessionDelegate::SpawnEntity`/`DespawnEntity` (`Main`).
+  entity types and RPCs, in the same order on every side. Clients send the
+  schema's hash (layouts and scene paths) on connecting and a mismatch is
+  rejected, so there is no protocol version to bump; `kWireVersion` only
+  covers the framework's own format.
+- Entity types, and spawning (the framework's `MultiplayerSpawner`):
+  `AddEntityType<FpsCharacter, PlayerState>(scene, parent_path)` for a C++
+  entity (the scene's root derives from `net::TypedEntity<State,
+  Command>` and implements `CaptureState`, `RestoreState`, `ApplyState`,
+  `Simulate`, `GatherInput`); `AddNodeType(scene, parent_path)` for any
+  `Node3D` scene without game code (`NodeEntity` replicates its transform;
+  physics bodies are frozen kinematic on clients). The server calls
+  `NetSession::Spawn(type, owner, transform)` / `Despawn(node)`; clients
+  instantiate and free the same scenes as entities appear in and leave the
+  snapshots. `SessionDelegate::OnSpawning` (before the node enters the tree,
+  e.g. `set_local`) and `OnSpawned` (after its `_ready`, e.g. signals) run
+  on every side. Entities placed in the scene (the targets) are registered
+  with `AddSceneEntity` in the same order on every side, before `Start()`.
 - `NetSession::_physics_process` runs before every other node's. The server
   calls `Simulate` on each owned entity with its owner's command: the local
   player's `GatherInput()`, or the client's queued commands by sequence
@@ -184,6 +189,9 @@ ninja -C out/android/release          # .so + app.apk (no_apk=true for just the 
   camera and touch controls, and their weapon stays on the body.
 - Physics layer 4 `player`: players don't collide with each other, shots
   hit them.
+- `scenes/crate.tscn` is a plain `RigidBody3D` (no C++): the server drops
+  a few (`Main::crate_scene`, under `Props`) as the example of
+  `AddNodeType`. Players don't push them (`move_and_slide` doesn't).
 - Deathmatch: a player has 100 health (`PlayerState::health`, `dead`, set
   only by the server: `FpsCharacter::TakeDamage` from `Weapon` hits). A
   dead player's commands do nothing and its body is hidden and off the

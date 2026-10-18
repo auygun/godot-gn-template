@@ -38,6 +38,10 @@ class Main : public Node, public ShotResolver, public net::SessionDelegate {
     player_scene_ = scene;
   }
   Ref<PackedScene> player_scene() const { return player_scene_; }
+  // A physics prop the server drops in a few of (any Node3D scene, without
+  // game code: the session replicates its transform).
+  void set_crate_scene(const Ref<PackedScene>& scene) { crate_scene_ = scene; }
+  Ref<PackedScene> crate_scene() const { return crate_scene_; }
 
   // ShotResolver, on the server: shots are tested against the players and
   // targets as the shooter saw them.
@@ -51,11 +55,15 @@ class Main : public Node, public ShotResolver, public net::SessionDelegate {
                       Vector3* normal) override;
 
   // net::SessionDelegate.
-  net::Entity* SpawnEntity(net::EntityId id,
-                           net::TypeId type,
-                           net::PeerId owner,
-                           const net::Box& state) override;
-  void DespawnEntity(net::EntityId id, net::Entity* entity) override;
+  void OnSpawning(Node* node,
+                  net::EntityId id,
+                  net::TypeId type,
+                  net::PeerId owner) override;
+  void OnSpawned(Node* node,
+                 net::EntityId id,
+                 net::TypeId type,
+                 net::PeerId owner) override;
+  void OnDespawned(Node* node, net::EntityId id) override;
   void OnPeerJoined(net::PeerId peer) override;
   void BeforeServerTick(float dt) override;
   // Remember where the shootable bodies are this tick (LagCompensation).
@@ -89,8 +97,9 @@ class Main : public Node, public ShotResolver, public net::SessionDelegate {
   static void OnHitEvent(void* self, net::PeerId from, const net::Box&);
   static void OnDamagedEvent(void* self, net::PeerId from, const net::Box&);
 
-  // Instance the player scene for peer at transform, under Players.
-  FpsCharacter* SpawnPlayer(net::PeerId peer, const Transform3D& transform);
+  // Where the server drops the crates, near the first spawn point.
+  static constexpr int kCrateCount = 4;
+
   // The next spawn point, round robin.
   Transform3D NextSpawnTransform();
   // The spawn point farthest from the living players (but for exclude).
@@ -107,11 +116,12 @@ class Main : public Node, public ShotResolver, public net::SessionDelegate {
   void OnAmmoChanged(int ammo, int reserve, bool reloading);
 
   Ref<PackedScene> player_scene_;
+  Ref<PackedScene> crate_scene_;
   net::NetSession* session_ = nullptr;
   net::TypeId player_type_ = 0;
   net::TypeId target_type_ = 0;
+  net::TypeId crate_type_ = 0;
   Hud* hud_ = nullptr;
-  Node* players_root_ = nullptr;
   std::vector<Target*> targets_;
   std::vector<Node3D*> spawn_points_;
   size_t next_spawn_ = 0;

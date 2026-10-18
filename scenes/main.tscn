@@ -1,9 +1,10 @@
-[gd_scene load_steps=8 format=3]
+[gd_scene load_steps=9 format=3]
 
 [ext_resource type="PackedScene" path="res://scenes/player.tscn" id="1_player"]
 [ext_resource type="PackedScene" path="res://scenes/target.tscn" id="2_target"]
 [ext_resource type="PackedScene" path="res://scenes/hud.tscn" id="3_hud"]
 [ext_resource type="PackedScene" path="res://scenes/levels/test_level.tscn" id="4_level"]
+[ext_resource type="PackedScene" path="res://scenes/crate.tscn" id="5_crate"]
 
 [sub_resource type="ProceduralSkyMaterial" id="ProceduralSkyMaterial_1"]
 sky_top_color = Color(0.35, 0.55, 0.85, 1)
@@ -22,6 +23,7 @@ tonemap_mode = 2
 
 [node name="Main" type="Main"]
 player_scene = ExtResource("1_player")
+crate_scene = ExtResource("5_crate")
 
 [node name="NetSession" type="NetSession" parent="."]
 
@@ -36,6 +38,8 @@ shadow_enabled = true
 [node name="Level" parent="." instance=ExtResource("4_level")]
 
 [node name="Players" type="Node3D" parent="."]
+
+[node name="Props" type="Node3D" parent="."]
 
 [node name="Targets" type="Node3D" parent="."]
 

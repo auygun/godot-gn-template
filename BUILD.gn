@@ -16,6 +16,7 @@ source_set("net") {
   sources = [
     "src/net/byte_stream.cc",
     "src/net/client_prediction.cc",
+    "src/net/node_entity.cc",
     "src/net/protocol.cc",
     "src/net/replicate.cc",
     "src/net/schema.cc",
@@ -101,6 +102,7 @@ if (build_apk) {
       "icon.svg",
       "icon.svg.import",
       "project.godot",
+      "scenes/crate.tscn",
       "scenes/hud.tscn",
       "scenes/impact.tscn",
       "scenes/levels/test_level.tscn",

@@ -69,6 +69,8 @@ size_t FieldSize(FieldType type) {
       return 8;
     case FieldType::kVector3:
       return 12;
+    case FieldType::kQuaternion:
+      return 16;
   }
   return 0;
 }
@@ -89,6 +91,60 @@ float QuantizeFloat(float value, const Codec& codec) {
     default:
       return value;
   }
+}
+
+// Smallest three: the largest component's index in the top 2 bits of the
+// first word, the others in 15 bits each (scaled from +-1/sqrt(2)), with
+// the sign chosen so the largest is positive (q and -q are the same
+// rotation).
+constexpr float kRotationScale = 16383.0f / static_cast<float>(Math::SQRT12);
+
+void EncodeRotation(const Quaternion& rotation, uint16_t out[3]) {
+  Quaternion q = rotation;
+  float length = q.length();
+  if (!std::isfinite(length) || length < 1e-6f) {
+    q = Quaternion();
+  } else {
+    q = q / length;
+  }
+  float c[4] = {q.x, q.y, q.z, q.w};
+  int largest = 0;
+  for (int i = 1; i < 4; i++) {
+    if (std::abs(c[i]) > std::abs(c[largest])) {
+      largest = i;
+    }
+  }
+  float sign = c[largest] < 0.0f ? -1.0f : 1.0f;
+  int k = 0;
+  for (int i = 0; i < 4; i++) {
+    if (i == largest) {
+      continue;
+    }
+    long v =
+        std::clamp(std::lround(c[i] * sign * kRotationScale), -16383L, 16383L);
+    // 15 bits, offset to unsigned.
+    out[k++] = static_cast<uint16_t>(v + 16383);
+  }
+  out[0] |= static_cast<uint16_t>((largest & 1) << 15);
+  out[1] |= static_cast<uint16_t>((largest >> 1) << 15);
+}
+
+Quaternion DecodeRotation(const uint16_t in[3]) {
+  int largest = (in[0] >> 15) | ((in[1] >> 15) << 1);
+  float c[4];
+  float sum = 0.0f;
+  int k = 0;
+  for (int i = 0; i < 4; i++) {
+    if (i == largest) {
+      continue;
+    }
+    float v =
+        (static_cast<float>(in[k++] & 0x7fff) - 16383.0f) / kRotationScale;
+    c[i] = v;
+    sum += v * v;
+  }
+  c[largest] = std::sqrt(std::max(0.0f, 1.0f - sum));
+  return Quaternion(c[0], c[1], c[2], c[3]).normalized();
 }
 
 // The field as the view receives it.
@@ -116,6 +172,13 @@ void QuantizeField(uint8_t* data, const FieldInfo& field) {
                     QuantizeLinear(v.z, s, 32767) / s));
       break;
     }
+    case FieldType::kQuaternion:
+      if (codec.kind == CodecKind::kRotation) {
+        uint16_t words[3];
+        EncodeRotation(Load<Quaternion>(data, field), words);
+        Store(data, field, DecodeRotation(words));
+      }
+      break;
     case FieldType::kU16:
       if (codec.kind == CodecKind::kLowByte) {
         Store(data, field,
@@ -227,6 +290,22 @@ void WriteField(const uint8_t* data,
       }
       break;
     }
+    case FieldType::kQuaternion: {
+      Quaternion q = Load<Quaternion>(data, field);
+      if (codec.kind == CodecKind::kRotation) {
+        uint16_t words[3];
+        EncodeRotation(q, words);
+        for (uint16_t word : words) {
+          writer->U16(word);
+        }
+      } else {
+        writer->Float(q.x);
+        writer->Float(q.y);
+        writer->Float(q.z);
+        writer->Float(q.w);
+      }
+      break;
+    }
   }
 }
 
@@ -298,6 +377,23 @@ void ReadField(const FieldInfo& field,
       Store(data, field, v);
       break;
     }
+    case FieldType::kQuaternion: {
+      Quaternion q;
+      if (codec.kind == CodecKind::kRotation) {
+        uint16_t words[3];
+        for (uint16_t& word : words) {
+          word = reader->U16();
+        }
+        q = DecodeRotation(words);
+      } else {
+        q.x = reader->Float();
+        q.y = reader->Float();
+        q.z = reader->Float();
+        q.w = reader->Float();
+      }
+      Store(data, field, q);
+      break;
+    }
   }
 }
 
@@ -317,6 +413,8 @@ bool SameField(const uint8_t* a,
         return Load<Vector2>(a, field) == Load<Vector2>(b, field);
       case FieldType::kVector3:
         return Load<Vector3>(a, field) == Load<Vector3>(b, field);
+      case FieldType::kQuaternion:
+        return Load<Quaternion>(a, field) == Load<Quaternion>(b, field);
       case FieldType::kBool:
         return Load<bool>(a, field) == Load<bool>(b, field);
       default:
@@ -496,6 +594,12 @@ bool PredictionMatches(const Box& predicted, const Box& actual) {
         same = Load<Vector3>(p, field).distance_squared_to(
                    Load<Vector3>(a, field)) < tolerance * tolerance;
         break;
+      case FieldType::kQuaternion: {
+        // q and -q are the same rotation.
+        float dot = Load<Quaternion>(p, field).dot(Load<Quaternion>(a, field));
+        same = 1.0f - std::abs(dot) < tolerance * tolerance;
+        break;
+      }
       default:
         same = SameField(p, a, field, false);
         break;
@@ -554,6 +658,14 @@ void Blend(const Box& from, const Box& to, float t, Box* out) {
               Load<Vector3>(from.data(), field)
                   .lerp(Load<Vector3>(to.data(), field), t));
         break;
+      case FieldType::kQuaternion: {
+        Quaternion a = Load<Quaternion>(from.data(), field);
+        Quaternion b = Load<Quaternion>(to.data(), field);
+        if (a.is_normalized() && b.is_normalized()) {
+          Store(o, field, a.slerp(b, t));
+        }
+        break;
+      }
       default:
         break;
     }

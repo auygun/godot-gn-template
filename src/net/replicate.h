@@ -9,6 +9,7 @@
 #include <vector>
 
 #include <godot_cpp/core/error_macros.hpp>
+#include <godot_cpp/variant/quaternion.hpp>
 #include <godot_cpp/variant/vector2.hpp>
 #include <godot_cpp/variant/vector3.hpp>
 
@@ -35,7 +36,8 @@ class ByteWriter;
 // against an earlier value), quantizes it, compares predictions and blends
 // snapshots. The struct must be trivially copyable, at most kMaxStateSize
 // bytes, and its fields bool, uint8_t, uint16_t, uint32_t, int32_t, float,
-// double, Vector2 or Vector3 (nested structs call their own Replicate).
+// double, Vector2, Vector3 or Quaternion (nested structs call their own
+// Replicate).
 // Entity states, commands and RPC payloads are all declared this way.
 //
 // Changing a declaration changes the Schema's hash, which peers compare
@@ -57,7 +59,8 @@ enum FieldFlags : uint32_t {
   // misprediction, but not counted as one).
   kServer = 1 << 5,
   // Interpolated between snapshots (float, Vector2, Vector3; angles the
-  // short way round). The rest comes from the older snapshot.
+  // short way round; quaternions slerped). The rest comes from the older
+  // snapshot.
   kBlend = 1 << 3,
   // When it changes between two snapshots, nothing of the entity is
   // blended (e.g. a respawn count: a teleport mustn't slide).
@@ -74,6 +77,7 @@ enum class FieldType : uint8_t {
   kDouble,
   kVector2,
   kVector3,
+  kQuaternion,
 };
 
 enum class CodecKind : uint8_t {
@@ -83,6 +87,7 @@ enum class CodecKind : uint8_t {
   kPitch,
   kUnit,
   kLowByte,
+  kRotation,
 };
 
 // How a field is sent to those who get it quantized (kOthers, and every
@@ -133,6 +138,15 @@ struct Unit : Codec {
   template <class T>
   static constexpr bool kAccepts =
       std::is_same_v<T, float> || std::is_same_v<T, Vector2>;
+};
+
+// A unit quaternion (a rotation) in 6 bytes: its three smallest components
+// in 15 bits each, the largest's index in the rest (its value follows from
+// the length). About 0.005 degrees.
+struct Rotation : Codec {
+  constexpr Rotation() : Codec{CodecKind::kRotation, 0.0f, 1e-3f} {}
+  template <class T>
+  static constexpr bool kAccepts = std::is_same_v<T, Quaternion>;
 };
 
 // An integer's low byte, e.g. a counter whose changes are what matter.
@@ -205,9 +219,11 @@ constexpr FieldType FieldTypeOf() {
     return FieldType::kDouble;
   } else if constexpr (std::is_same_v<T, Vector2>) {
     return FieldType::kVector2;
-  } else {
-    static_assert(std::is_same_v<T, Vector3>, "not a replicable field type");
+  } else if constexpr (std::is_same_v<T, Vector3>) {
     return FieldType::kVector3;
+  } else {
+    static_assert(std::is_same_v<T, Quaternion>, "not a replicable field type");
+    return FieldType::kQuaternion;
   }
 }
 
@@ -223,7 +239,8 @@ class LayoutBuilder {
     static_assert(C::template kAccepts<T>, "the codec can't encode this type");
     constexpr bool kBlendable =
         std::is_same_v<T, float> || std::is_same_v<T, double> ||
-        std::is_same_v<T, Vector2> || std::is_same_v<T, Vector3>;
+        std::is_same_v<T, Vector2> || std::is_same_v<T, Vector3> ||
+        std::is_same_v<T, Quaternion>;
     CRASH_COND_MSG((flags & kBlend) && !kBlendable,
                    "kBlend on a field that can't be blended");
     FieldInfo info;

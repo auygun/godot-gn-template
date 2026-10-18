@@ -35,8 +35,4 @@ void NodeEntity::OnRemoteAuthority() {
   }
 }
 
-Vector3 NodeEntity::Position() const {
-  return node_->get_global_position();
-}
-
 }  // namespace godot::net

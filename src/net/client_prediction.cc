@@ -80,7 +80,6 @@ void ClientPrediction::Reconcile(Entity* entity,
 
   // Back to the server's state, then forward through the commands it
   // hasn't simulated yet.
-  Vector3 predicted_position = entity->Position();
   Box predicted;
   entity->CaptureBox(&predicted);
   entity->RestoreBox(server_state);
@@ -100,7 +99,7 @@ void ClientPrediction::Reconcile(Entity* entity,
   Box corrected;
   entity->CaptureBox(&corrected);
   if (SameTeleportFields(predicted, corrected)) {
-    entity->OnCorrected(predicted_position - entity->Position());
+    entity->OnCorrectedBox(predicted, corrected);
   } else {
     entity->OnTeleported();
   }

@@ -30,7 +30,6 @@ class Target : public CharacterBody3D, public net::TypedEntity<TargetState> {
   void OnRemoteAuthority() override;
   TargetState CaptureState() const override;
   void ApplyState(const TargetState& state) override;
-  Vector3 Position() const override { return get_global_position(); }
 
   float health() const { return health_; }
   bool dead() const { return dead_; }

@@ -1,8 +1,6 @@
 #ifndef SRC_NET_ENTITY_H_
 #define SRC_NET_ENTITY_H_
 
-#include <godot_cpp/variant/vector3.hpp>
-
 #include "src/net/replicate.h"
 #include "src/net/types.h"
 
@@ -46,14 +44,12 @@ class Entity {
   // (e.g. turn off its own _physics_process). Its own entity is still
   // predicted (Simulate).
   virtual void OnRemoteAuthority() {}
-  // On a client, its own entity: a prediction was corrected, and the
-  // entity is now error (old minus new position) from where it was drawn;
-  // or the correction changed a kTeleport field (a respawn), and it
-  // shouldn't be drawn sliding there.
-  virtual void OnCorrected(const Vector3& error) {}
+  // On a client, its own entity: a prediction was corrected from the
+  // predicted state to the corrected one (the game state now), and the
+  // view may ease across the difference; or the correction changed a
+  // kTeleport field (a respawn), and it shouldn't be drawn sliding there.
+  virtual void OnCorrectedBox(const Box& predicted, const Box& corrected) {}
   virtual void OnTeleported() {}
-  // Where the entity is, for the correction's error.
-  virtual Vector3 Position() const { return Vector3(); }
 
  protected:
   virtual ~Entity() = default;
@@ -74,6 +70,7 @@ class TypedEntity : public Entity {
   virtual void Simulate(const Command& command, const SimContext& context) {}
   virtual Command GatherInput() { return Command(); }
   virtual Command IdleInput() const { return Command(); }
+  virtual void OnCorrected(const State& predicted, const State& corrected) {}
 
   void CaptureBox(Box* state) const final { *state = Box::Of(CaptureState()); }
   void RestoreBox(const Box& state) final { RestoreState(state.As<State>()); }
@@ -83,6 +80,9 @@ class TypedEntity : public Entity {
   }
   void GatherBox(Box* command) final { *command = Box::Of(GatherInput()); }
   void IdleBox(Box* command) const final { *command = Box::Of(IdleInput()); }
+  void OnCorrectedBox(const Box& predicted, const Box& corrected) final {
+    OnCorrected(predicted.As<State>(), corrected.As<State>());
+  }
 };
 
 }  // namespace godot::net

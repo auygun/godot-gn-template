@@ -176,9 +176,9 @@ ninja -C out/android/release          # .so + app.apk (no_apk=true for just the 
   effects, but hits and damage stay the server's), sends its last 4
   commands, and on a snapshot restores the server's state and replays the
   unacknowledged commands (`kReplay`) if the prediction differs; the view
-  eases across the difference (`Entity::OnCorrected`). Everything else is
-  drawn ~100 ms in the past by `SnapshotInterpolator`, blending the
-  `kBlend` fields.
+  eases across the difference (`TypedEntity::OnCorrected` gets the
+  predicted and corrected states). Everything else is drawn ~100 ms in the
+  past by `SnapshotInterpolator`, blending the `kBlend` fields.
 - Lag compensation is split: the framework only provides the time. Each
   command carries the server tick its client was drawing
   (`SimContext::view_tick`, clamped to `set_max_rewind_ticks` back), and

@@ -68,10 +68,10 @@ class FpsCharacter : public CharacterBody3D,
   // body there rather than sliding, and look where it faces.
   void OnTeleported() override;
   // After a prediction was corrected: ease the view across the difference
-  // (old minus new position), shrinking to nothing over the next ticks; a
-  // large one snaps.
-  void OnCorrected(const Vector3& error) override;
-  Vector3 Position() const override { return get_global_position(); }
+  // in what it draws (position, recoil and landing dip), shrinking to
+  // nothing over the next ticks; a large move snaps.
+  void OnCorrected(const PlayerState& predicted,
+                   const PlayerState& corrected) override;
 
   // Back to the spawn transform (or the one given) with full health and
   // ammo and a still camera.
@@ -160,8 +160,8 @@ class FpsCharacter : public CharacterBody3D,
   static constexpr float kMinLandingSpeed = 2.0f;   // m/s
   static constexpr float kMaxLandingSpeed = 12.0f;  // m/s
   static constexpr float kLandingSpring = 16.0f;    // angular frequency, 1/s
-  // A correction of the predicted position eases out at this rate, 1/s;
-  // past kMaxSmoothedCorrection it snaps.
+  // A correction of the view eases out at this rate, 1/s; a position more
+  // than kMaxSmoothedCorrection off snaps.
   static constexpr float kCorrectionRate = 15.0f;
   static constexpr float kMaxSmoothedCorrection = 1.0f;  // meters
 
@@ -170,9 +170,10 @@ class FpsCharacter : public CharacterBody3D,
   void UpdateLandingDip(float dt, float landing_speed);
   // Every frame, so it is smooth at any refresh rate: advance the bob.
   void UpdateBob(float dt);
-  // Place the (top-level) camera at the body's eye, looking along the
-  // local look and the recoil (decayed by since_tick seconds past the last
-  // tick), moved by the bob and landing_dip.
+  // Place the (top-level) camera at the body's eye plus correction,
+  // looking along the local look and the recoil (both decayed by
+  // since_tick seconds past the last tick), moved by the bob and
+  // landing_dip.
   void UpdateCamera(const Vector3& origin,
                     float landing_dip,
                     const Vector3& correction,
@@ -224,12 +225,21 @@ class FpsCharacter : public CharacterBody3D,
   bool fire_held_ = false;
   float step_phase_ = 0.0f;
   float bob_amount_ = 0.0f;
-  // How far off the view is drawn after corrections (OnCorrected):
-  // at the last tick, the tick before (for drawing between them, like the
-  // landing dip), and added since the last tick.
-  Vector3 correction_offset_;
-  Vector3 prev_correction_offset_;
-  Vector3 new_correction_;
+  // How far off the view is drawn after corrections (OnCorrected), from
+  // the predicted state minus the corrected one.
+  struct ViewCorrection {
+    Vector3 position;
+    float recoil = 0.0f;
+    float recoil_yaw = 0.0f;
+    float landing_offset = 0.0f;
+  };
+  // At the last tick, and added since. The position is drawn between the
+  // last two ticks, like the body (the tick before's is
+  // prev_correction_position_); the others decay from the last tick, like
+  // the recoil.
+  ViewCorrection correction_;
+  ViewCorrection new_correction_;
+  Vector3 prev_correction_position_;
   // Look rotation applied since the last frame, in radians.
   Vector2 look_delta_;
   Vector2 look_velocity_;

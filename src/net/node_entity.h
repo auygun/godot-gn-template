@@ -40,7 +40,6 @@ class NodeEntity : public TypedEntity<NodeState> {
   // A physics body is frozen (kinematic): a body the client simulated too
   // would drift apart from the server's.
   void OnRemoteAuthority() override;
-  Vector3 Position() const override;
 
   Node3D* node() const { return node_; }
 

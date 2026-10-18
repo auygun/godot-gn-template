@@ -105,7 +105,8 @@ class NetSession : public Node {
   // On the server: instantiate the type's scene at transform under its
   // parent, and replicate it to every client, which instantiates it too.
   // owner: the peer whose commands it is simulated with (kNoOwner: none,
-  // it simulates itself). Returns the node, or null.
+  // it simulates itself); a peer owns at most one entity. Returns the node,
+  // or null.
   Node* Spawn(TypeId type, PeerId owner, const Transform3D& transform);
   // On the server: remove a spawned entity everywhere, freeing its node.
   void Despawn(Node* node);

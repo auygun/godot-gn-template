@@ -144,7 +144,8 @@ ninja -C out/android/release          # .so + app.apk (no_apk=true for just the 
   `Simulate`, `GatherInput`); `AddNodeType(scene, parent_path)` for any
   `Node3D` scene without game code (`NodeEntity` replicates its transform;
   physics bodies are frozen kinematic on clients). The server calls
-  `NetSession::Spawn(type, owner, transform)` / `Despawn(node)`; clients
+  `NetSession::Spawn(type, owner, transform)` / `Despawn(node)` (a peer
+  owns at most one entity: the one its client predicts); clients
   instantiate and free the same scenes as entities appear in and leave the
   snapshots. On every side, before a spawned node enters the tree, the
   entity gets `Entity::OnSpawning(owner, local)` (`FpsCharacter` takes its

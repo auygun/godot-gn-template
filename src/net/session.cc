@@ -246,6 +246,14 @@ Node* NetSession::Spawn(TypeId type,
                         const Transform3D& transform) {
   ERR_FAIL_COND_V_MSG(!is_server(), nullptr,
                       "NetSession: clients get entities from the server");
+  // A client predicts one entity, and its commands are one queue.
+  if (owner != kNoOwner) {
+    for (const auto& [id, record] : entities_) {
+      ERR_FAIL_COND_V_MSG(
+          record.owner == owner, nullptr,
+          vformat("NetSession: peer %d already owns an entity", owner));
+    }
+  }
   Node* node = Instantiate(type, transform);
   EntityRecord record;
   if (!MakeRecord(node, type, owner, &record)) {

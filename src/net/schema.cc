@@ -26,6 +26,23 @@ TypeId Schema::AddNodeType(const Ref<PackedScene>& scene,
   return static_cast<TypeId>(entity_types_.size() - 1);
 }
 
+bool Schema::MatchSceneNode(Node* node, TypeId* type) const {
+  String scene_path = node->get_scene_file_path();
+  for (size_t i = 0; i < entity_types_.size(); i++) {
+    const EntityType& entry = entity_types_[i];
+    // Plain node types by their scene: by class, every Node3D would match.
+    bool match = entry.cast
+                     ? entry.cast(node) != nullptr
+                     : entry.scene.is_valid() && !scene_path.is_empty() &&
+                           scene_path == entry.scene->get_path();
+    if (match) {
+      *type = static_cast<TypeId>(i);
+      return true;
+    }
+  }
+  return false;
+}
+
 int Schema::FindRpc(const void* key) const {
   for (size_t i = 0; i < rpcs_.size(); i++) {
     if (rpcs_[i].layout->key == key) {

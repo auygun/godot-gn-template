@@ -5,6 +5,7 @@
 
 #include <godot_cpp/classes/box_shape3d.hpp>
 #include <godot_cpp/classes/capsule_shape3d.hpp>
+#include <godot_cpp/classes/collision_object3d.hpp>
 #include <godot_cpp/classes/collision_shape3d.hpp>
 #include <godot_cpp/classes/node3d.hpp>
 
@@ -144,26 +145,34 @@ float RayBox(const Vector3& origin,
 
 }  // namespace
 
-LagCompensation::LagCompensation() = default;
+LagCompensation::LagCompensation(uint32_t shot_mask) : shot_mask_(shot_mask) {}
 
 LagCompensation::~LagCompensation() = default;
 
-void LagCompensation::Record(uint32_t tick, const std::vector<Body>& bodies) {
+bool LagCompensation::Hittable(const Node3D* body) const {
+  const CollisionObject3D* object = Object::cast_to<CollisionObject3D>(body);
+  if (!object || !(object->get_collision_layer() & shot_mask_)) {
+    return false;
+  }
+  const CollisionShape3D* shape = Object::cast_to<CollisionShape3D>(
+      body->get_node_or_null("CollisionShape3D"));
+  return shape && !shape->is_disabled() && shape->get_shape().is_valid();
+}
+
+void LagCompensation::Record(uint32_t tick,
+                             const std::vector<Node3D*>& bodies) {
   Frame& frame = frames_[tick % kHistoryTicks];
   frame.tick = tick;
   frame.valid = true;
   frame.hitboxes.clear();
-  for (const Body& body : bodies) {
-    if (!body.active || !body.node) {
+  for (Node3D* body : bodies) {
+    if (!Hittable(body)) {
       continue;
     }
     CollisionShape3D* shape = Object::cast_to<CollisionShape3D>(
-        body.node->get_node_or_null("CollisionShape3D"));
-    if (!shape || shape->is_disabled() || shape->get_shape().is_null()) {
-      continue;
-    }
+        body->get_node_or_null("CollisionShape3D"));
     Hitbox hitbox;
-    hitbox.node = body.node;
+    hitbox.node = body;
     hitbox.transform = shape->get_global_transform();
     Ref<CapsuleShape3D> capsule = shape->get_shape();
     Ref<BoxShape3D> box = shape->get_shape();

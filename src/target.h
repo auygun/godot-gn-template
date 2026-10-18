@@ -25,9 +25,9 @@ class Target : public CharacterBody3D, public net::TypedEntity<TargetState> {
   void TakeDamage(float amount, const Vector3& from);
   void Respawn();
 
-  // On a client, the server simulates the target, and the client applies
+  // On a client: the server simulates the target, and the client applies
   // the state it sends.
-  void set_simulated(bool simulated);
+  void OnRemoteAuthority() override;
   TargetState CaptureState() const override;
   void ApplyState(const TargetState& state) override;
   Vector3 Position() const override { return get_global_position(); }

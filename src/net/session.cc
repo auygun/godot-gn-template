@@ -54,8 +54,22 @@ bool NetSession::Start() {
   if (!StartNetwork()) {
     return false;
   }
+  Node* base = get_parent() ? get_parent() : this;
+  std::vector<Node*> spawn_parents;
+  for (size_t type = 0; type < schema_.entity_type_count(); type++) {
+    Node* parent = base->get_node_or_null(
+        schema_.entity_parent(static_cast<TypeId>(type)));
+    if (parent && parent != base) {
+      spawn_parents.push_back(parent);
+    }
+  }
+  AddSceneEntities(base, spawn_parents);
   if (is_server()) {
     local_peer_ = kServerPeerId;
+  } else {
+    for (auto& [id, record] : entities_) {
+      record.entity->OnRemoteAuthority();
+    }
   }
   started_ = true;
   return true;
@@ -197,7 +211,7 @@ bool NetSession::MakeRecord(Node* node,
   if (cast) {
     record->entity = cast(node);
   } else if (Node3D* node3d = Object::cast_to<Node3D>(node)) {
-    record->adapter = std::make_shared<NodeEntity>(node3d, is_server());
+    record->adapter = std::make_shared<NodeEntity>(node3d);
     record->entity = record->adapter.get();
   }
   return record->entity != nullptr;
@@ -258,17 +272,56 @@ void NetSession::Despawn(Node* node) {
   Remove(id);
 }
 
-EntityId NetSession::AddSceneEntity(Node* node, TypeId type) {
-  ERR_FAIL_COND_V_MSG(started_, 0,
-                      "NetSession: scene entities are added before Start");
-  EntityRecord record;
-  ERR_FAIL_COND_V_MSG(!MakeRecord(node, type, kNoOwner, &record), 0,
-                      "NetSession: not an entity of the type");
-  record.scene = true;
-  EntityId id = next_id_++;
-  first_spawned_id_ = next_id_;
-  entities_[id] = std::move(record);
-  return id;
+void NetSession::AddSceneEntities(Node* node,
+                                  const std::vector<Node*>& spawn_parents) {
+  for (int i = 0; i < node->get_child_count(); i++) {
+    Node* child = node->get_child(i);
+    if (child == this || std::find(spawn_parents.begin(), spawn_parents.end(),
+                                   child) != spawn_parents.end()) {
+      continue;
+    }
+    TypeId type = 0;
+    EntityRecord record;
+    if (schema_.MatchSceneNode(child, &type) &&
+        MakeRecord(child, type, kNoOwner, &record)) {
+      record.scene = true;
+      entities_[next_id_++] = std::move(record);
+      // An entity's own children are its own business.
+      continue;
+    }
+    AddSceneEntities(child, spawn_parents);
+  }
+}
+
+uint32_t NetSession::SessionHash() const {
+  uint32_t hash = schema_.hash();
+  auto mix = [&hash](uint32_t value) {
+    for (int i = 0; i < 4; i++) {
+      hash ^= (value >> (i * 8)) & 0xff;
+      hash *= 16777619u;
+    }
+  };
+  const Node* base = get_parent() ? get_parent() : this;
+  for (const auto& [id, record] : entities_) {
+    if (!record.scene) {
+      continue;
+    }
+    mix(id);
+    mix(record.type);
+    CharString path = String(base->get_path_to(record.node)).utf8();
+    for (int i = 0; i < path.length(); i++) {
+      mix(static_cast<uint8_t>(path[i]));
+    }
+  }
+  return hash;
+}
+
+std::vector<Node*> NetSession::nodes() const {
+  std::vector<Node*> result;
+  for (const auto& [id, record] : entities_) {
+    result.push_back(record.node);
+  }
+  return result;
 }
 
 void NetSession::Remove(EntityId id) {
@@ -535,6 +588,7 @@ Entity* NetSession::SpawnFromSnapshot(const SnapshotEntity& entry) {
   AddToTree(node, entry.type);
   entities_[entry.id] = std::move(record);
   delegate_->OnSpawned(node, entry.id, entry.type, entry.owner);
+  entity->OnRemoteAuthority();
   entity->ApplyBox(entry.state);
   return entity;
 }
@@ -751,7 +805,7 @@ void NetSession::OnPeerPacket(int64_t peer_id, const PackedByteArray& bytes) {
       DecodeHello(bytes, &hash);
       UtilityFunctions::push_error(vformat(
           "NetSession: the server's game differs (schema %x, this is %x)", hash,
-          schema_.hash()));
+          SessionHash()));
       get_tree()->quit(1);
     }
     return;
@@ -775,7 +829,7 @@ void NetSession::OnConnectedToServer() {
   local_peer_ = multiplayer_->get_unique_id();
   UtilityFunctions::print(
       vformat("NetSession: connected as peer %d", local_peer_));
-  Send(EncodeHello(MessageType::kHello, schema_.hash()), kServerPeerId,
+  Send(EncodeHello(MessageType::kHello, SessionHash()), kServerPeerId,
        MultiplayerPeer::TRANSFER_MODE_RELIABLE);
 }
 
@@ -797,12 +851,12 @@ void NetSession::OnHello(PeerId peer, const PackedByteArray& bytes) {
       !DecodeHello(bytes, &hash)) {
     return;
   }
-  if (hash != schema_.hash()) {
+  if (hash != SessionHash()) {
     UtilityFunctions::push_warning(vformat(
         "NetSession: peer %d runs a different game (schema %x, this is %x)",
-        peer, hash, schema_.hash()));
+        peer, hash, SessionHash()));
     // It quits when it gets this.
-    Send(EncodeHello(MessageType::kReject, schema_.hash()), peer,
+    Send(EncodeHello(MessageType::kReject, SessionHash()), peer,
          MultiplayerPeer::TRANSFER_MODE_RELIABLE);
     return;
   }

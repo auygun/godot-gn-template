@@ -24,16 +24,21 @@ class Node3D;
 // are tested against them here, in plain math.
 class LagCompensation {
  public:
-  LagCompensation();
   ~LagCompensation();
 
-  // Record the bodies' hitboxes for a tick (after it was simulated). Dead
-  // bodies (inactive) aren't hit.
-  struct Body {
-    Node3D* node = nullptr;
-    bool active = true;
-  };
-  void Record(uint32_t tick, const std::vector<Body>& bodies);
+  // Bodies in this group (set in their scenes) are tested in the past:
+  // Main records every network entity in it.
+  static constexpr const char* kGroup = "lag_compensated";
+
+  // shot_mask: the collision layers shots hit (Weapon::kShotMask).
+  explicit LagCompensation(uint32_t shot_mask);
+
+  // Record the bodies' hitboxes for a tick (after it was simulated). A
+  // body that can't be hit now isn't recorded: one off the shot layers, or
+  // whose shape is disabled (e.g. dead).
+  void Record(uint32_t tick, const std::vector<Node3D*>& bodies);
+  // Whether a body can be hit now (as Record decides).
+  bool Hittable(const Node3D* body) const;
 
   // The nearest body the ray from origin along direction (normalized), at
   // most max_distance long, hits as the bodies were at view_tick (between
@@ -72,6 +77,7 @@ class LagCompensation {
 
   const Frame* FindFrame(uint32_t tick) const;
 
+  uint32_t shot_mask_;
   std::array<Frame, kHistoryTicks> frames_;
   uint32_t newest_tick_ = 0;
 };

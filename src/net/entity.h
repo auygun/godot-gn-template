@@ -14,8 +14,8 @@ namespace godot::net {
 // unwraps the boxes.
 //
 // The server spawns entities (NetSession::Spawn), and clients instantiate
-// the same scenes from the snapshots; entities placed in the scene are
-// registered on every side in the same order (NetSession::AddSceneEntity).
+// the same scenes from the snapshots. Entities placed in the scene are
+// found by NetSession::Start on every side.
 class Entity {
  public:
   // The game state: everything Simulate reads and writes (of the struct
@@ -35,6 +35,11 @@ class Entity {
   // simulate meanwhile (e.g. standing still, looking where it faces).
   virtual void IdleBox(Box* command) const = 0;
 
+  // On a client, for every entity it has (spawned or the scene's): the
+  // server simulates it, and the client only draws the states it sends
+  // (e.g. turn off its own _physics_process). Its own entity is still
+  // predicted (Simulate).
+  virtual void OnRemoteAuthority() {}
   // On a client, its own entity: a prediction was corrected, and the
   // entity is now error (old minus new position) from where it was drawn;
   // or the correction changed a kTeleport field (a respawn), and it

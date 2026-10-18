@@ -14,7 +14,7 @@ material = SubResource("StandardMaterial3D_1")
 radius = 0.4
 height = 1.8
 
-[node name="Player" type="FpsCharacter"]
+[node name="Player" type="FpsCharacter" groups=["lag_compensated"]]
 collision_layer = 8
 collision_mask = 3
 

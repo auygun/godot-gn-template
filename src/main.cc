@@ -2,6 +2,7 @@
 
 #include <algorithm>
 
+#include <godot_cpp/classes/collision_object3d.hpp>
 #include <godot_cpp/classes/node3d.hpp>
 #include <godot_cpp/classes/scene_tree.hpp>
 #include <godot_cpp/core/class_db.hpp>
@@ -35,7 +36,7 @@ void Main::_ready() {
   schema.SetCommand<PlayerInput>();
   player_type_ = schema.AddEntityType<FpsCharacter, PlayerState>(
       player_scene_, NodePath("Players"));
-  net::TypeId target_type = schema.AddEntityType<Target, TargetState>();
+  schema.AddEntityType<Target, TargetState>();
   net::TypeId crate_type = 0;
   if (crate_scene_.is_valid()) {
     crate_type = schema.AddNodeType(crate_scene_, NodePath("Props"));
@@ -46,17 +47,6 @@ void Main::_ready() {
   session_->set_delegate(this);
   session_->set_max_rewind_ticks(kMaxRewindTicks);
 
-  // The scene's targets, in order: the same ids on every side.
-  Node* targets = get_node_or_null("Targets");
-  if (targets) {
-    for (int i = 0; i < targets->get_child_count(); i++) {
-      Target* target = Object::cast_to<Target>(targets->get_child(i));
-      if (target) {
-        targets_.push_back(target);
-        session_->AddSceneEntity(target, target_type);
-      }
-    }
-  }
   Node* spawn_points = get_node_or_null("Level/SpawnPoints");
   if (spawn_points) {
     for (int i = 0; i < spawn_points->get_child_count(); i++) {
@@ -72,10 +62,6 @@ void Main::_ready() {
     return;
   }
   if (!session_->is_server()) {
-    // The server simulates them.
-    for (Target* target : targets_) {
-      target->set_simulated(false);
-    }
     return;
   }
   if (session_->has_local_player()) {
@@ -175,17 +161,21 @@ void Main::BeforeServerTick(float dt) {
 }
 
 void Main::AfterServerTick(uint32_t tick) {
-  // After the players moved; targets move in their own _physics_process,
-  // after this, so theirs are a tick old, which is what clients see too
-  // (the snapshot is taken after this).
-  std::vector<LagCompensation::Body> bodies;
-  for (const auto& [peer, player] : players_) {
-    bodies.push_back({player, !player->dead()});
+  // After the owned entities (players) moved; the rest move in their own
+  // _physics_process, after this, so theirs are a tick old, which is what
+  // clients see too (the snapshot is taken after this).
+  lag_compensation_.Record(tick, LagCompensatedBodies());
+}
+
+std::vector<Node3D*> Main::LagCompensatedBodies() const {
+  std::vector<Node3D*> bodies;
+  for (Node* node : session_->nodes()) {
+    Node3D* body = Object::cast_to<Node3D>(node);
+    if (body && body->is_in_group(LagCompensation::kGroup)) {
+      bodies.push_back(body);
+    }
   }
-  for (Target* target : targets_) {
-    bodies.push_back({target, !target->dead()});
-  }
-  lag_compensation_.Record(tick, bodies);
+  return bodies;
 }
 
 FpsCharacter* Main::PlayerOf(net::PeerId peer) const {
@@ -227,12 +217,13 @@ Transform3D Main::SafestSpawnTransform(const FpsCharacter* exclude) {
 }
 
 TypedArray<RID> Main::ShootableBodies() {
+  // The physics ray passes through them: they're hit in the past instead.
   TypedArray<RID> bodies;
-  for (const auto& [peer, player] : players_) {
-    bodies.push_back(player->get_rid());
-  }
-  for (Target* target : targets_) {
-    bodies.push_back(target->get_rid());
+  for (Node3D* body : LagCompensatedBodies()) {
+    CollisionObject3D* object = Object::cast_to<CollisionObject3D>(body);
+    if (object) {
+      bodies.push_back(object->get_rid());
+    }
   }
   return bodies;
 }
@@ -247,14 +238,9 @@ Node3D* Main::ResolveShot(const Node3D* shooter,
   Node3D* body = lag_compensation_.Raycast(static_cast<float>(view_tick),
                                            origin, direction, max_distance,
                                            shooter, position, normal);
-  // It may have died since (a body is only shot once dead in the past if
-  // it's still alive now).
-  FpsCharacter* player = Object::cast_to<FpsCharacter>(body);
-  Target* target = Object::cast_to<Target>(body);
-  if ((player && player->dead()) || (target && target->dead())) {
-    return nullptr;
-  }
-  return body;
+  // It may have died since (a body is only hit in the past if it can still
+  // be hit now).
+  return body && lag_compensation_.Hittable(body) ? body : nullptr;
 }
 
 void Main::OnWeaponHit(Object* collider, int64_t peer) {

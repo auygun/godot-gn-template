@@ -148,8 +148,13 @@ ninja -C out/android/release          # .so + app.apk (no_apk=true for just the 
   instantiate and free the same scenes as entities appear in and leave the
   snapshots. `SessionDelegate::OnSpawning` (before the node enters the tree,
   e.g. `set_local`) and `OnSpawned` (after its `_ready`, e.g. signals) run
-  on every side. Entities placed in the scene (the targets) are registered
-  with `AddSceneEntity` in the same order on every side, before `Start()`.
+  on every side. Entities placed in the scene are found by `Start()`: every
+  node under `Main` of a registered type (by class, or a plain node type's
+  scene), in tree order, outside the spawn parents. The ids match because
+  every side loads the same scene; their paths are part of the hash checked
+  on connecting. On clients every entity gets `Entity::OnRemoteAuthority`
+  (e.g. `Target` stops its own `_physics_process`; `NodeEntity` freezes
+  physics bodies).
 - `NetSession::_physics_process` runs before every other node's. The server
   calls `Simulate` on each owned entity with its owner's command: the local
   player's `GatherInput()`, or the client's queued commands by sequence
@@ -174,10 +179,14 @@ ninja -C out/android/release          # .so + app.apk (no_apk=true for just the 
   (`SimContext::view_tick`, clamped to `set_max_rewind_ticks` back), and
   `SessionDelegate::AfterServerTick(tick)` runs after each tick's
   simulation. What is tested at that time is the game's: `Main` records the
-  bodies' hitboxes each tick (`src/lag_compensation.cc`, from their
+  hitboxes of every network entity in the `lag_compensated` group (set in
+  the entity's scene; `src/lag_compensation.cc`, from its
   `CollisionShape3D`: capsules and boxes) and is the weapons'
   `ShotResolver`: the physics ray finds the level, the history the bodies,
-  and the nearer wins. A game with per-bone hitboxes would record those.
+  and the nearer wins. A body is hittable while it is on a layer in
+  `Weapon::kShotMask` with its shape enabled (`LagCompensation::Hittable`):
+  a dead player leaves layer 4, a dead target disables its shape. A game
+  with per-bone hitboxes would record those.
 - Only `Simulate`'s inputs and the state struct may affect the outcome, or
   predictions won't match: e.g. floor snapping goes by `on_floor_`, not the
   body's last `move_and_slide`. Anything new in `Simulate` belongs in

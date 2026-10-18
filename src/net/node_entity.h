@@ -32,11 +32,14 @@ struct NodeState {
 class NodeEntity : public TypedEntity<NodeState> {
  public:
   // The node must outlive this (NetSession frees both together).
-  NodeEntity(Node3D* node, bool server);
+  explicit NodeEntity(Node3D* node);
   ~NodeEntity() override;
 
   NodeState CaptureState() const override;
   void ApplyState(const NodeState& state) override;
+  // A physics body is frozen (kinematic): a body the client simulated too
+  // would drift apart from the server's.
+  void OnRemoteAuthority() override;
   Vector3 Position() const override;
 
   Node3D* node() const { return node_; }

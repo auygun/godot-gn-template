@@ -73,8 +73,8 @@ void Target::Respawn() {
   SetDead(false);
 }
 
-void Target::set_simulated(bool simulated) {
-  set_physics_process(simulated);
+void Target::OnRemoteAuthority() {
+  set_physics_process(false);
 }
 
 TargetState Target::CaptureState() const {

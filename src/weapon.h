@@ -45,6 +45,11 @@ class Weapon : public Node3D {
   GDCLASS(Weapon, Node3D);
 
  public:
+  // Physics layers shots hit (named in project.godot): world (1),
+  // shot_only (3) and player (4), not player_clip (2). With a
+  // ShotResolver, the ray passes through its bodies.
+  static constexpr uint32_t kShotMask = (1u << 0) | (1u << 2) | (1u << 3);
+
   Weapon();
   ~Weapon() override;
 
@@ -93,10 +98,6 @@ class Weapon : public Node3D {
  private:
   // Length of the hitscan ray, in meters.
   static constexpr float kRange = 100.0f;
-  // Physics layers shots hit (named in project.godot): world (1),
-  // shot_only (3) and player (4), not player_clip (2). With a
-  // ShotResolver, the ray passes through its bodies.
-  static constexpr uint32_t kShotMask = (1u << 0) | (1u << 2) | (1u << 3);
   // The barrel aims at the crosshair's hit point, but never closer than
   // this (pressed against a wall it would turn sideways), in meters.
   static constexpr float kMinAimDistance = 2.0f;

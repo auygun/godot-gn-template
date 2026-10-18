@@ -73,6 +73,11 @@ class Schema {
   }
   // Null for a plain node type (AddNodeType).
   EntityCast entity_cast(TypeId type) const { return entity_types_[type].cast; }
+  size_t entity_type_count() const { return entity_types_.size(); }
+  // The type a node placed in the scene is an entity of: the first whose
+  // class it is (AddEntityType), or whose scene it is an instance of
+  // (AddNodeType). False if none.
+  bool MatchSceneNode(Node* node, TypeId* type) const;
   // The RPC for the payload type, or -1.
   int FindRpc(const void* key) const;
   const Layout* rpc_layout(int rpc) const { return rpcs_[rpc].layout; }

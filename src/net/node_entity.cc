@@ -5,15 +5,7 @@
 
 namespace godot::net {
 
-NodeEntity::NodeEntity(Node3D* node, bool server) : node_(node) {
-  RigidBody3D* body = Object::cast_to<RigidBody3D>(node);
-  if (body && !server) {
-    // Moved only by the server's state: a body the client simulated too
-    // would drift apart from it.
-    body->set_freeze_mode(RigidBody3D::FREEZE_MODE_KINEMATIC);
-    body->set_freeze_enabled(true);
-  }
-}
+NodeEntity::NodeEntity(Node3D* node) : node_(node) {}
 
 NodeEntity::~NodeEntity() = default;
 
@@ -32,6 +24,14 @@ void NodeEntity::ApplyState(const NodeState& state) {
   if (!has_state_) {
     has_state_ = true;
     node_->reset_physics_interpolation();
+  }
+}
+
+void NodeEntity::OnRemoteAuthority() {
+  RigidBody3D* body = Object::cast_to<RigidBody3D>(node_);
+  if (body) {
+    body->set_freeze_mode(RigidBody3D::FREEZE_MODE_KINEMATIC);
+    body->set_freeze_enabled(true);
   }
 }
 

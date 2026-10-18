@@ -10,7 +10,7 @@ albedo_color = Color(0.9, 0.3, 0.2, 1)
 material = SubResource("StandardMaterial3D_1")
 size = Vector3(0.6, 1.2, 0.6)
 
-[node name="Target" type="Target"]
+[node name="Target" type="Target" groups=["lag_compensated"]]
 collision_mask = 9
 
 [node name="CollisionShape3D" type="CollisionShape3D" parent="."]

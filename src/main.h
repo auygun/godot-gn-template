@@ -18,7 +18,6 @@ namespace godot {
 class FpsCharacter;
 class Hud;
 class Node3D;
-class Target;
 
 // The game: a deathmatch. The networking is the NetSession's (src/net/,
 // the "NetSession" child): Main declares what it replicates (Schema), spawns
@@ -66,7 +65,7 @@ class Main : public Node, public ShotResolver, public net::SessionDelegate {
   void OnDespawned(Node* node, net::EntityId id) override;
   void OnPeerJoined(net::PeerId peer) override;
   void BeforeServerTick(float dt) override;
-  // Remember where the shootable bodies are this tick (LagCompensation).
+  // Remember where the lag compensated bodies are this tick.
   void AfterServerTick(uint32_t tick) override;
 
  protected:
@@ -105,6 +104,8 @@ class Main : public Node, public ShotResolver, public net::SessionDelegate {
   // The spawn point farthest from the living players (but for exclude).
   Transform3D SafestSpawnTransform(const FpsCharacter* exclude);
   FpsCharacter* PlayerOf(net::PeerId peer) const;
+  // The network entities in LagCompensation::kGroup.
+  std::vector<Node3D*> LagCompensatedBodies() const;
 
   // From the players' weapons, bound to the shooter's peer id.
   void OnWeaponHit(Object* collider, int64_t peer);
@@ -120,7 +121,6 @@ class Main : public Node, public ShotResolver, public net::SessionDelegate {
   net::NetSession* session_ = nullptr;
   net::TypeId player_type_ = 0;
   Hud* hud_ = nullptr;
-  std::vector<Target*> targets_;
   std::vector<Node3D*> spawn_points_;
   size_t next_spawn_ = 0;
 
@@ -129,7 +129,7 @@ class Main : public Node, public ShotResolver, public net::SessionDelegate {
   // On the server: seconds until each dead player respawns, by peer id.
   std::map<net::PeerId, float> respawn_timers_;
   // On the server: the bodies' hitboxes on recent ticks.
-  LagCompensation lag_compensation_;
+  LagCompensation lag_compensation_{Weapon::kShotMask};
 };
 
 }  // namespace godot

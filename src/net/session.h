@@ -90,8 +90,14 @@ class NetSession : public Node {
   Schema& schema() { return schema_; }
   void set_delegate(SessionDelegate* delegate) { delegate_ = delegate; }
 
-  // Parse the command line and start listening or connecting. False (and
-  // an error printed) on failure: the game should quit.
+  // Register the entities placed in the scene, then parse the command line
+  // and start listening or connecting. False (and an error printed) on
+  // failure: the game should quit.
+  //
+  // The scene entities are the nodes under the session's parent that are
+  // of a registered type (by class, or a plain node type's scene), in tree
+  // order, outside the types' spawn parents. Every side loads the same
+  // scene, so they get the same ids; peers compare them when they connect.
   bool Start();
 
   // On the server: instantiate the type's scene at transform under its
@@ -101,11 +107,8 @@ class NetSession : public Node {
   Node* Spawn(TypeId type, PeerId owner, const Transform3D& transform);
   // On the server: remove a spawned entity everywhere, freeing its node.
   void Despawn(Node* node);
-  // On every side, before Start, in the same order: an entity placed in
-  // the scene (node: its Entity's node, or any Node3D for a plain node
-  // type). Returns its id.
-  EntityId AddSceneEntity(Node* node, TypeId type);
-
+  // Every entity's node (spawned or the scene's), by id.
+  std::vector<Node*> nodes() const;
   // A spawned or scene entity's node, id and owner (null/0/kNoOwner if it
   // isn't one).
   Node* FindNode(EntityId id) const;
@@ -178,6 +181,10 @@ class NetSession : public Node {
   bool AddToTree(Node* node, TypeId type);
   // Unregister the entity and, if it was spawned, free its node.
   void Remove(EntityId id);
+  // Register the scene's entities under node (Start).
+  void AddSceneEntities(Node* node, const std::vector<Node*>& spawn_parents);
+  // The schema's hash and the scene entities': what peers compare.
+  uint32_t SessionHash() const;
 
   // On the server, per client. Each tick simulates the client's next
   // command by sequence number; if it hasn't arrived, the last command
@@ -264,8 +271,6 @@ class NetSession : public Node {
   // By id, ascending.
   std::map<EntityId, EntityRecord> entities_;
   EntityId next_id_ = 1;
-  // Ids below this are the scene's (the same on every side).
-  EntityId first_spawned_id_ = 1;
 
   std::array<Snapshot, kSnapshotHistory> snapshot_history_;
 

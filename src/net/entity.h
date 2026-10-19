@@ -44,11 +44,14 @@ class Entity {
   // (e.g. turn off its own _physics_process). Its own entity is still
   // predicted (Simulate).
   virtual void OnRemoteAuthority() {}
-  // On a client, its own entity: a prediction was corrected from the
-  // predicted state to the corrected one (the game state now), and the
-  // view may ease across the difference; or the correction changed a
-  // kTeleport field (a respawn), and it shouldn't be drawn sliding there.
-  virtual void OnCorrectedBox(const Box& predicted, const Box& corrected) {}
+  // On the machine that commands it (the server's own player, a client's
+  // predicted one), every frame before the nodes' _process, and after each
+  // tick before their _physics_process: the state to draw (ViewSmoother),
+  // its fields with a DrawFn drawn between the last two ticks, plus the
+  // corrections of its predictions easing out.
+  virtual void DrawBox(const Box& view) {}
+  // On a client, its own entity: a correction changed a kTeleport field (a
+  // respawn), and it shouldn't be drawn sliding there.
   virtual void OnTeleported() {}
 
  protected:
@@ -70,7 +73,7 @@ class TypedEntity : public Entity {
   virtual void Simulate(const Command& command, const SimContext& context) {}
   virtual Command GatherInput() { return Command(); }
   virtual Command IdleInput() const { return Command(); }
-  virtual void OnCorrected(const State& predicted, const State& corrected) {}
+  virtual void Draw(const State& view) {}
 
   void CaptureBox(Box* state) const final { *state = Box::Of(CaptureState()); }
   void RestoreBox(const Box& state) final { RestoreState(state.As<State>()); }
@@ -80,9 +83,7 @@ class TypedEntity : public Entity {
   }
   void GatherBox(Box* command) final { *command = Box::Of(GatherInput()); }
   void IdleBox(Box* command) const final { *command = Box::Of(IdleInput()); }
-  void OnCorrectedBox(const Box& predicted, const Box& corrected) final {
-    OnCorrected(predicted.As<State>(), corrected.As<State>());
-  }
+  void DrawBox(const Box& view) final { Draw(view.As<State>()); }
 };
 
 }  // namespace godot::net

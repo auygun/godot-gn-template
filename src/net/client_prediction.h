@@ -10,6 +10,7 @@
 namespace godot::net {
 
 class Entity;
+class ViewSmoother;
 
 // A client's prediction of its own entity: each command is simulated as
 // soon as it is made, rather than a round trip later when the server's
@@ -19,7 +20,7 @@ class Entity;
 // acknowledges them. When the server's state for an acknowledged command
 // differs from the prediction, the entity is put back to the server's
 // state and the commands since are simulated again (without effects); the
-// view eases across the difference.
+// view eases across the difference (ViewSmoother).
 //
 // It also keeps the server's queue of this client's commands short but
 // never empty: the server simulates one command per tick, so the queue is
@@ -41,12 +42,14 @@ class ClientPrediction {
   InputMessage MakeInputMessage() const;
   // A snapshot: the server's state for the entity after command ack (0:
   // none of ours yet), and how many ticks early our commands arrive there
-  // (Snapshot::input_buffer).
+  // (Snapshot::input_buffer). Before this tick's command. A correction is
+  // handed to smoother, which draws the entity.
   void Reconcile(Entity* entity,
                  uint32_t ack,
                  int input_buffer,
                  const Box& server_state,
-                 float dt);
+                 float dt,
+                 ViewSmoother* smoother);
 
   // Counts for the log.
   uint32_t predicted_count() const { return predicted_count_; }
@@ -80,8 +83,9 @@ class ClientPrediction {
   uint32_t sequence_ = 0;
   uint32_t last_ack_ = 0;
 
-  // Ticks still to skip.
+  // Ticks still to skip, and whether the last tick was skipped.
   int skipped_ticks_ = 0;
+  bool skipped_last_tick_ = false;
   // Until the server acknowledges this command, its queue doesn't show the
   // last change yet.
   uint32_t adjusted_at_ = 0;

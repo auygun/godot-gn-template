@@ -3,7 +3,6 @@
 #include <cmath>
 
 #include <godot_cpp/classes/camera3d.hpp>
-#include <godot_cpp/classes/engine.hpp>
 #include <godot_cpp/classes/input.hpp>
 #include <godot_cpp/classes/input_event_mouse_button.hpp>
 #include <godot_cpp/classes/input_event_mouse_motion.hpp>
@@ -55,6 +54,8 @@ void FpsCharacter::_ready() {
   spawn_transform_ = get_global_transform();
   yaw_ = get_rotation().y;
   look_yaw_ = yaw_;
+  // Until the session draws it.
+  view_ = CaptureState();
   if (!local_) {
     // Drawn from the simulation alone: no look, bob or local input.
     set_process(false);
@@ -83,22 +84,11 @@ void FpsCharacter::OnSpawning(net::PeerId owner, bool local) {
 
 void FpsCharacter::_physics_process(double delta) {
   // The NetSession has already simulated (or, on a client, applied the
-  // server's state for) this tick.
-  float ease = std::exp(-kCorrectionRate * static_cast<float>(delta));
-  prev_correction_position_ = correction_.position;
-  correction_.position = correction_.position * ease + new_correction_.position;
-  correction_.recoil = correction_.recoil * ease + new_correction_.recoil;
-  correction_.recoil_yaw =
-      correction_.recoil_yaw * ease + new_correction_.recoil_yaw;
-  correction_.landing_offset =
-      correction_.landing_offset * ease + new_correction_.landing_offset;
-  new_correction_ = ViewCorrection();
-  // Tick position, not interpolated: the weapon (a child) runs its
-  // _physics_process next and aims the barrel from the camera.
-  // _process moves the camera to the drawn position before rendering.
-  UpdateCamera(get_global_transform().origin,
-               landing_offset_ + correction_.landing_offset,
-               correction_.position, 0.0f);
+  // server's state for) this tick, and drawn it as of the tick: the
+  // weapon (a child) runs its _physics_process next and aims the barrel
+  // from the camera. _process moves the camera to the drawn position
+  // before rendering.
+  UpdateCamera();
 }
 
 PlayerInput FpsCharacter::GatherInput() {
@@ -152,7 +142,7 @@ void FpsCharacter::Simulate(const PlayerInput& command,
   }
   view_tick_ = context.view_tick;
   // Even when dead: the camera decays it between ticks too.
-  float decay = std::exp(-kRecoilReturn * dt);
+  float decay = std::exp(-PlayerState::kRecoilReturn * dt);
   recoil_ *= decay;
   recoil_yaw_ *= decay;
   if (dead_) {
@@ -263,7 +253,6 @@ void FpsCharacter::RestoreState(const PlayerState& state) {
   set_velocity(state.velocity);
   recoil_ = state.recoil;
   recoil_yaw_ = state.recoil_yaw;
-  prev_landing_offset_ = landing_offset_;
   landing_offset_ = state.landing_offset;
   landing_velocity_ = state.landing_velocity;
   shot_count_ = state.shot_count;
@@ -300,35 +289,12 @@ void FpsCharacter::ApplyState(const PlayerState& state) {
 
 void FpsCharacter::OnTeleported() {
   reset_physics_interpolation();
-  prev_landing_offset_ = landing_offset_;
-  correction_ = ViewCorrection();
-  new_correction_ = ViewCorrection();
-  prev_correction_position_ = Vector3();
   look_yaw_ = yaw_;
   look_pitch_ = pitch_;
 }
 
-void FpsCharacter::OnCorrected(const PlayerState& predicted,
-                               const PlayerState& corrected) {
-  new_correction_.position += predicted.position - corrected.position;
-  // The states are the last tick's, but the camera draws the recoil from
-  // the next tick's, which has decayed once more.
-  float recoil_decay = std::exp(
-      -kRecoilReturn * static_cast<float>(get_physics_process_delta_time()));
-  new_correction_.recoil +=
-      (predicted.recoil - corrected.recoil) * recoil_decay;
-  new_correction_.recoil_yaw +=
-      (predicted.recoil_yaw - corrected.recoil_yaw) * recoil_decay;
-  new_correction_.landing_offset +=
-      predicted.landing_offset - corrected.landing_offset;
-  if ((correction_.position + new_correction_.position).length() >
-      kMaxSmoothedCorrection) {
-    // Too far to ease: snap there.
-    reset_physics_interpolation();
-    correction_ = ViewCorrection();
-    new_correction_ = ViewCorrection();
-    prev_correction_position_ = Vector3();
-  }
+void FpsCharacter::Draw(const PlayerState& view) {
+  view_ = view;
 }
 
 void FpsCharacter::_process(double delta) {
@@ -338,33 +304,11 @@ void FpsCharacter::_process(double delta) {
     look_delta_ = Vector2();
     UpdateBob(dt);
   }
-  // Recoil only kicks and decays on ticks; decay it to now, so its return
-  // is smooth at any refresh rate.
-  float since_tick = static_cast<float>(
-      Engine::get_singleton()->get_physics_interpolation_fraction() *
-      get_physics_process_delta_time());
-  // The body is drawn between its last two tick positions; the eye follows
-  // it there, turned by the latest look input.
-  float fraction = static_cast<float>(
-      Engine::get_singleton()->get_physics_interpolation_fraction());
-  UpdateCamera(get_global_transform_interpolated().origin, landing_offset(),
-               prev_correction_position_.lerp(correction_.position, fraction),
-               since_tick);
-}
-
-float FpsCharacter::landing_offset() const {
-  // Between the last two ticks, like the body.
-  float fraction = static_cast<float>(
-      Engine::get_singleton()->get_physics_interpolation_fraction());
-  float since_tick =
-      fraction * static_cast<float>(get_physics_process_delta_time());
-  return prev_landing_offset_ +
-         (landing_offset_ - prev_landing_offset_) * fraction +
-         correction_.landing_offset * std::exp(-kCorrectionRate * since_tick);
+  // The NetSession's _process (which runs first) has drawn this frame.
+  UpdateCamera();
 }
 
 void FpsCharacter::UpdateLandingDip(float dt, float landing_speed) {
-  prev_landing_offset_ = landing_offset_;
   if (landing_speed > kMinLandingSpeed) {
     landing_velocity_ -=
         kLandingImpulse * static_cast<float>(UtilityFunctions::minf(
@@ -444,15 +388,12 @@ void FpsCharacter::RespawnAt(const Transform3D& transform) {
   bob_amount_ = 0.0f;
   landing_offset_ = 0.0f;
   landing_velocity_ = 0.0f;
-  prev_landing_offset_ = 0.0f;
   look_delta_ = Vector2();
   look_velocity_ = Vector2();
   local_velocity_ = Vector3();
-  correction_ = ViewCorrection();
-  new_correction_ = ViewCorrection();
-  prev_correction_position_ = Vector3();
   on_floor_ = false;
-  UpdateCamera(get_global_transform().origin, landing_offset_, Vector3(), 0.0f);
+  view_ = CaptureState();
+  UpdateCamera();
   if (weapon_) {
     weapon_->Refill();
   }
@@ -501,28 +442,22 @@ void FpsCharacter::HoldFire() {
   fire_held_ = true;
 }
 
-void FpsCharacter::UpdateCamera(const Vector3& origin,
-                                float landing_dip,
-                                const Vector3& correction,
-                                float since_tick) {
+void FpsCharacter::UpdateCamera() {
   if (!camera_) {
     return;
   }
-  float decay = std::exp(-kRecoilReturn * since_tick);
-  float ease = std::exp(-kCorrectionRate * since_tick);
-  float recoil = recoil_ * decay + correction_.recoil * ease;
-  float recoil_yaw = recoil_yaw_ * decay + correction_.recoil_yaw * ease;
   // The local look, not the simulated aim: it reacts to input arriving
   // after the last tick.
   float pitch = static_cast<float>(UtilityFunctions::clampf(
-      look_pitch_ + recoil, -kPitchLimit, kPitchLimit));
+      look_pitch_ + view_.recoil, -kPitchLimit, kPitchLimit));
   // The head is lowest when a foot lands (phase 0 and pi).
   float bob = kBobUp * bob_amount_ * -std::cos(2.0f * step_phase_);
   Basis yaw(Vector3(0.0f, 1.0f, 0.0f), look_yaw_);
   camera_->set_global_transform(Transform3D(
-      yaw * Basis::from_euler(Vector3(pitch, recoil_yaw, 0.0f)),
-      origin + correction +
-          yaw.xform(eye_offset_ + Vector3(0.0f, bob + landing_dip, 0.0f))));
+      yaw * Basis::from_euler(Vector3(pitch, view_.recoil_yaw, 0.0f)),
+      view_.position +
+          yaw.xform(eye_offset_ +
+                    Vector3(0.0f, bob + view_.landing_offset, 0.0f))));
 }
 
 // static

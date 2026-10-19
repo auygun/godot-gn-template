@@ -464,6 +464,29 @@ bool SameFlaggedFields(const Box& a, const Box& b, uint32_t flag) {
   return true;
 }
 
+template <class T>
+void DrawField(const Box& prev,
+               const Box& cur,
+               float fraction,
+               float dt,
+               const FieldInfo& field,
+               Box* out) {
+  auto draw = reinterpret_cast<DrawFn<T>>(field.draw);
+  Store(out->data(), field,
+        draw(Load<T>(prev.data(), field), Load<T>(cur.data(), field), fraction,
+             dt));
+}
+
+// Each eased field, by type.
+template <class F>
+void ForEachEased(const Layout& layout, F&& f) {
+  for (const FieldInfo& field : layout.fields) {
+    if (field.ease) {
+      f(field);
+    }
+  }
+}
+
 }  // namespace
 
 void FinishLayout(Layout* layout) {
@@ -670,6 +693,145 @@ void Blend(const Box& from, const Box& to, float t, Box* out) {
         break;
     }
   }
+}
+
+void DrawFields(const Box& prev,
+                const Box& cur,
+                float fraction,
+                float dt,
+                Box* out) {
+  *out = cur;
+  const Layout& layout = *cur.layout();
+  if (prev.layout() != &layout) {
+    return;
+  }
+  for (const FieldInfo& field : layout.fields) {
+    if (!field.draw) {
+      continue;
+    }
+    switch (field.type) {
+      case FieldType::kFloat:
+        DrawField<float>(prev, cur, fraction, dt, field, out);
+        break;
+      case FieldType::kDouble:
+        DrawField<double>(prev, cur, fraction, dt, field, out);
+        break;
+      case FieldType::kVector2:
+        DrawField<Vector2>(prev, cur, fraction, dt, field, out);
+        break;
+      case FieldType::kVector3:
+        DrawField<Vector3>(prev, cur, fraction, dt, field, out);
+        break;
+      case FieldType::kQuaternion:
+        DrawField<Quaternion>(prev, cur, fraction, dt, field, out);
+        break;
+      default:
+        break;
+    }
+  }
+}
+
+void SubtractEased(const Box& a, const Box& b, Box* out) {
+  const Layout& layout = *a.layout();
+  DEV_ASSERT(b.layout() == &layout);
+  out->Reset(layout);
+  std::memset(out->data(), 0, layout.size);
+  uint8_t* o = out->data();
+  ForEachEased(layout, [&](const FieldInfo& field) {
+    switch (field.type) {
+      case FieldType::kFloat: {
+        float x = Load<float>(a.data(), field);
+        float y = Load<float>(b.data(), field);
+        Store(o, field,
+              field.codec.kind == CodecKind::kAngle
+                  ? Math::angle_difference(y, x)
+                  : x - y);
+        break;
+      }
+      case FieldType::kDouble:
+        Store(o, field,
+              Load<double>(a.data(), field) - Load<double>(b.data(), field));
+        break;
+      case FieldType::kVector2:
+        Store(o, field,
+              Load<Vector2>(a.data(), field) - Load<Vector2>(b.data(), field));
+        break;
+      case FieldType::kVector3:
+        Store(o, field,
+              Load<Vector3>(a.data(), field) - Load<Vector3>(b.data(), field));
+        break;
+      default:
+        break;
+    }
+  });
+}
+
+void AddEased(const Box& diff, float age, Box* out) {
+  const Layout& layout = *diff.layout();
+  DEV_ASSERT(out->layout() == &layout);
+  uint8_t* o = out->data();
+  ForEachEased(layout, [&](const FieldInfo& field) {
+    float share = field.ease(age);
+    switch (field.type) {
+      case FieldType::kFloat:
+        Store(o, field,
+              Load<float>(o, field) + Load<float>(diff.data(), field) * share);
+        break;
+      case FieldType::kDouble:
+        Store(o, field,
+              Load<double>(o, field) + Load<double>(diff.data(), field) *
+                                           static_cast<double>(share));
+        break;
+      case FieldType::kVector2:
+        Store(o, field,
+              Load<Vector2>(o, field) +
+                  Load<Vector2>(diff.data(), field) * share);
+        break;
+      case FieldType::kVector3:
+        Store(o, field,
+              Load<Vector3>(o, field) +
+                  Load<Vector3>(diff.data(), field) * share);
+        break;
+      default:
+        break;
+    }
+  });
+}
+
+bool StillEasing(const Layout& layout, float age) {
+  bool easing = false;
+  ForEachEased(layout, [&](const FieldInfo& field) {
+    easing = easing || field.ease(age) > 1e-3f;
+  });
+  return easing;
+}
+
+bool ExceedsSnap(const Box& offset) {
+  bool exceeds = false;
+  ForEachEased(*offset.layout(), [&](const FieldInfo& field) {
+    if (field.snap <= 0.0f) {
+      return;
+    }
+    double size = 0.0;
+    switch (field.type) {
+      case FieldType::kFloat:
+        size = std::abs(Load<float>(offset.data(), field));
+        break;
+      case FieldType::kDouble:
+        size = std::abs(Load<double>(offset.data(), field));
+        break;
+      case FieldType::kVector2:
+        size = Load<Vector2>(offset.data(), field).length();
+        break;
+      case FieldType::kVector3:
+        size = Load<Vector3>(offset.data(), field).length();
+        break;
+      default:
+        break;
+    }
+    exceeds = exceeds || size > field.snap;
+  });
+  return exceeds;
 }
 
 }  // namespace godot::net

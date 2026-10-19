@@ -59,16 +59,31 @@ struct PlayerState {
   uint16_t kills = 0;
   uint16_t deaths = 0;
 
+  // How fast Simulate returns the recoil, 1/s.
+  static constexpr float kRecoilReturn = 6.0f;
+  // How fast a correction of the view eases out, 1/s; a position more
+  // than kMaxSmoothedCorrection off snaps.
+  static constexpr float kCorrectionRate = 15.0f;
+  static constexpr float kMaxSmoothedCorrection = 1.0f;  // meters
+
   template <class V>
   void Replicate(V& v) {
     using namespace net;
-    v(position, Position(), kAll | kPredicted | kBlend);
+    // What the camera draws (FpsCharacter::Draw): the body between the
+    // last two ticks, the recoil decaying on from the last, as Simulate
+    // decays it. Yaw and pitch aren't: the camera looks along the latest
+    // look input.
+    v(position, Position(), kAll | kPredicted | kBlend, Lerp,
+      EaseExp<kCorrectionRate>, kMaxSmoothedCorrection);
     v(velocity, Exact(1e-2f), kOwner | kPredicted);
     v(yaw, Angle(), kAll | kPredicted | kBlend);
     v(pitch, Pitch(), kAll | kPredicted | kBlend);
-    v(recoil, Exact(), kOwner | kPredicted);
-    v(recoil_yaw, Exact(), kOwner | kPredicted);
-    v(landing_offset, Exact(), kOwner | kPredicted);
+    v(recoil, Exact(), kOwner | kPredicted, Decay<kRecoilReturn>,
+      EaseExp<kCorrectionRate>);
+    v(recoil_yaw, Exact(), kOwner | kPredicted, Decay<kRecoilReturn>,
+      EaseExp<kCorrectionRate>);
+    v(landing_offset, Exact(), kOwner | kPredicted, Lerp,
+      EaseExp<kCorrectionRate>);
     v(landing_velocity, Exact(), kOwner);
     // Others play a shot's effects when it changes.
     v(shot_count, LowByte(), kAll | kPredicted);

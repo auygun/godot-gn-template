@@ -132,6 +132,14 @@ ninja -C out/android/release          # .so + app.apk (no_apk=true for just the 
   teleport). Encoding, deltas, quantization, comparison, blending and the
   debug round-trip check are all generated from it. Structs must be
   trivially copyable (`<= kMaxStateSize`).
+- How the machine commanding an entity draws a field is declared there too
+  (local, not hashed): `v(field, codec, flags, draw, ease, snap)`. `draw`
+  (`DrawFn`) gives the value between ticks: `Lerp`/`LerpAngle` (between
+  the last two, a tick behind) or `Decay<rate>` (on from the last, for a
+  field `Simulate` decays, e.g. recoil). `ease` (`EaseFn`, the share of a
+  correction left after some time: `EaseExp<rate>`, `EaseSpring<rate>`,
+  `EaseSmoothstep<seconds>`) eases out mispredictions, and a correction
+  over `snap` shows at once. Function pointers, so a game can pass its own.
 - `Main::_ready` registers the `Schema`: `SetCommand<PlayerInput>()`,
   entity types and RPCs, in the same order on every side. Clients send the
   schema's hash (layouts and scene paths) on connecting and a mismatch is
@@ -175,10 +183,13 @@ ninja -C out/android/release          # .so + app.apk (no_apk=true for just the 
   simulates its new command right away (`SimulationMode::kPredicted`:
   effects, but hits and damage stay the server's), sends its last 4
   commands, and on a snapshot restores the server's state and replays the
-  unacknowledged commands (`kReplay`) if the prediction differs; the view
-  eases across the difference (`TypedEntity::OnCorrected` gets the
-  predicted and corrected states). Everything else is drawn ~100 ms in the
-  past by `SnapshotInterpolator`, blending the `kBlend` fields.
+  unacknowledged commands (`kReplay`) if the prediction differs. The
+  entity a machine commands is drawn by `ViewSmoother`: every frame (and
+  after each tick) `NetSession` hands it `TypedEntity::Draw(view)`, its
+  drawn fields between ticks plus the corrections easing out (each the
+  difference between the predicted and corrected views at the last tick,
+  so the view continues where it was). Everything else is drawn ~100 ms in
+  the past by `SnapshotInterpolator`, blending the `kBlend` fields.
 - Lag compensation is split: the framework only provides the time. Each
   command carries the server tick its client was drawing
   (`SimContext::view_tick`, clamped to `set_max_rewind_ticks` back), and

@@ -22,6 +22,7 @@ source_set("net") {
     "src/net/schema.cc",
     "src/net/session.cc",
     "src/net/snapshot_interpolator.cc",
+    "src/net/view_smoother.cc",
   ]
   deps = [ "//third_party/godot-cpp" ]
   include_dirs = [ "//" ]

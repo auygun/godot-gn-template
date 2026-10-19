@@ -1,6 +1,8 @@
 #ifndef SRC_NET_REPLICATE_H_
 #define SRC_NET_REPLICATE_H_
 
+#include <algorithm>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -9,6 +11,7 @@
 #include <vector>
 
 #include <godot_cpp/core/error_macros.hpp>
+#include <godot_cpp/core/math.hpp>
 #include <godot_cpp/variant/quaternion.hpp>
 #include <godot_cpp/variant/vector2.hpp>
 #include <godot_cpp/variant/vector3.hpp>
@@ -33,12 +36,12 @@ class ByteWriter;
 //   };
 //
 // From that, the framework encodes and decodes the struct (as a delta
-// against an earlier value), quantizes it, compares predictions and blends
-// snapshots. The struct must be trivially copyable, at most kMaxStateSize
-// bytes, and its fields bool, uint8_t, uint16_t, uint32_t, int32_t, float,
-// double, Vector2, Vector3 or Quaternion (nested structs call their own
-// Replicate).
-// Entity states, commands and RPC payloads are all declared this way.
+// against an earlier value), quantizes it, compares predictions, blends
+// snapshots and draws the local entity between ticks (see DrawFn). The struct
+// must be trivially copyable, at most kMaxStateSize bytes, and its fields bool,
+// uint8_t, uint16_t, uint32_t, int32_t, float, double, Vector2, Vector3 or
+// Quaternion (nested structs call their own Replicate). Entity states, commands
+// and RPC payloads are all declared this way.
 //
 // Changing a declaration changes the Schema's hash, which peers compare
 // when they connect: no protocol version to bump.
@@ -158,6 +161,64 @@ struct LowByte : Codec {
       std::is_same_v<T, int32_t>;
 };
 
+// How the machine that commands an entity draws a field between ticks (the
+// server's own player, a client's predicted one): the value fraction
+// (0..1) of the way through the dt seconds after the last tick, from the
+// field at the tick before (prev) and at the last (cur). It should pass
+// through every tick's value, or the view jumps on ticks: e.g. Lerp, one
+// tick behind, or Decay, ahead along what Simulate does between ticks.
+// Local only: not part of the Schema's hash.
+template <class T>
+using DrawFn = T (*)(const T& prev, const T& cur, float fraction, float dt);
+
+// How a correction of a drawn field eases out: the share of it still drawn
+// age seconds after it, 1 at 0 and falling to 0. Corrections add up, each
+// eased from its own time.
+using EaseFn = float (*)(float age);
+
+// Draw: between the last two ticks (angles the short way round with
+// LerpAngle; quaternions slerped).
+template <class T>
+T Lerp(const T& prev, const T& cur, float fraction, float dt) {
+  if constexpr (std::is_same_v<T, Quaternion>) {
+    return prev.slerp(cur, fraction);
+  } else {
+    return prev + (cur - prev) * fraction;
+  }
+}
+inline float LerpAngle(const float& prev,
+                       const float& cur,
+                       float fraction,
+                       float dt) {
+  return Math::lerp_angle(prev, cur, fraction);
+}
+// Draw: from the last tick on, decaying at kRate (1/s), for a field that
+// Simulate decays the same way (e.g. a recoil). What else changes it (a
+// kick) shows on the next tick.
+template <float kRate, class T>
+T Decay(const T& prev, const T& cur, float fraction, float dt) {
+  static_assert(!std::is_same_v<T, Quaternion>, "can't decay a quaternion");
+  return cur * std::exp(-kRate * fraction * dt);
+}
+
+// Ease: exponentially at kRate (1/s); it starts moving at full speed.
+template <float kRate>
+float EaseExp(float age) {
+  return std::exp(-kRate * age);
+}
+// Ease: as a critically damped spring of angular frequency kRate (1/s),
+// released at rest: it starts moving smoothly.
+template <float kRate>
+float EaseSpring(float age) {
+  return (1.0f + kRate * age) * std::exp(-kRate * age);
+}
+// Ease: along a smoothstep over kSeconds, gone after them.
+template <float kSeconds>
+float EaseSmoothstep(float age) {
+  float t = std::clamp(age / kSeconds, 0.0f, 1.0f);
+  return 1.0f - t * t * (3.0f - 2.0f * t);
+}
+
 // Which fields an encoding carries, and how.
 enum class View : uint8_t {
   // The entity's owner: its kOwner fields, exact.
@@ -173,6 +234,12 @@ struct FieldInfo {
   FieldType type = FieldType::kBool;
   Codec codec;
   uint32_t flags = 0;
+  // The field's DrawFn (as a generic function pointer; null: drawn as of
+  // the last tick), its EaseFn (null: corrections show at once), and how
+  // far off a correction snaps instead (0: never; a distance for vectors).
+  void (*draw)() = nullptr;
+  EaseFn ease = nullptr;
+  float snap = 0.0f;
 };
 
 // What the framework knows about a replicated struct.
@@ -234,7 +301,12 @@ class LayoutBuilder {
       : layout_(layout), base_(static_cast<const uint8_t*>(base)) {}
 
   template <class T, class C>
-  void operator()(T& field, const C& codec, uint32_t flags = kAll) {
+  void operator()(T& field,
+                  const C& codec,
+                  uint32_t flags = kAll,
+                  DrawFn<T> draw = nullptr,
+                  EaseFn ease = nullptr,
+                  float snap = 0.0f) {
     static_assert(std::is_base_of_v<Codec, C>, "not a codec");
     static_assert(C::template kAccepts<T>, "the codec can't encode this type");
     constexpr bool kBlendable =
@@ -243,12 +315,20 @@ class LayoutBuilder {
         std::is_same_v<T, Quaternion>;
     CRASH_COND_MSG((flags & kBlend) && !kBlendable,
                    "kBlend on a field that can't be blended");
+    CRASH_COND_MSG(draw && !kBlendable,
+                   "drawing a field that can't be blended");
+    // Corrections are differences, added up.
+    CRASH_COND_MSG(ease && (!draw || std::is_same_v<T, Quaternion>),
+                   "easing a field that isn't drawn, or a quaternion");
     FieldInfo info;
     info.offset =
         static_cast<uint32_t>(reinterpret_cast<const uint8_t*>(&field) - base_);
     info.type = FieldTypeOf<T>();
     info.codec = codec;
     info.flags = flags;
+    info.draw = reinterpret_cast<void (*)()>(draw);
+    info.ease = ease;
+    info.snap = snap;
     layout_->fields.push_back(info);
   }
 
@@ -355,6 +435,22 @@ bool SameTeleportFields(const Box& a, const Box& b);
 // from, moved a fraction t of the way to to (the kBlend fields), unless a
 // kTeleport field changed; from and to of the same type.
 void Blend(const Box& from, const Box& to, float t, Box* out);
+
+// The fields with a DrawFn drawn fraction of the way through the dt
+// seconds after cur's tick (prev's the tick before); the rest as in cur.
+void DrawFields(const Box& prev,
+                const Box& cur,
+                float fraction,
+                float dt,
+                Box* out);
+// The eased fields of a minus b (angles the short way round), the rest 0.
+void SubtractEased(const Box& a, const Box& b, Box* out);
+// Add each eased field of diff, times its EaseFn of age, to out's.
+void AddEased(const Box& diff, float age, Box* out);
+// Whether any eased field still draws a noticeable share at age.
+bool StillEasing(const Layout& layout, float age);
+// Whether any eased field of offset is further off than its snap.
+bool ExceedsSnap(const Box& offset);
 
 }  // namespace godot::net
 

@@ -67,11 +67,10 @@ class FpsCharacter : public CharacterBody3D,
   // After the game state jumped (a respawn, the first state): draw the
   // body there rather than sliding, and look where it faces.
   void OnTeleported() override;
-  // After a prediction was corrected: ease the view across the difference
-  // in what it draws (position, recoil and landing dip), shrinking to
-  // nothing over the next ticks; a large move snaps.
-  void OnCorrected(const PlayerState& predicted,
-                   const PlayerState& corrected) override;
+  // The state the camera draws, for the player at this machine (see
+  // PlayerState::Replicate): the position, recoil and landing dip between
+  // ticks, with corrections easing out.
+  void Draw(const PlayerState& view) override;
 
   // Back to the spawn transform (or the one given) with full health and
   // ammo and a still camera.
@@ -94,7 +93,7 @@ class FpsCharacter : public CharacterBody3D,
   float step_phase() const { return step_phase_; }
   float bob_amount() const { return bob_amount_; }
   // The landing dip as drawn this frame, in meters (negative is down).
-  float landing_offset() const;
+  float landing_offset() const { return view_.landing_offset; }
   // The first-person camera; null on other players' characters.
   Camera3D* camera() const { return camera_; }
   Weapon* weapon() const { return weapon_; }
@@ -139,7 +138,6 @@ class FpsCharacter : public CharacterBody3D,
   // offset.
   static constexpr float kRecoilKick = 0.03f;      // radians per shot
   static constexpr float kRecoilYawKick = 0.008f;  // max radians per shot
-  static constexpr float kRecoilReturn = 6.0f;     // decay rate, 1/s
   // Head bob: step cycles (two steps each) per second at walk speed. It
   // grows with the square root of speed (longer strides when sprinting).
   static constexpr float kStepRate = 1.5f;
@@ -160,24 +158,15 @@ class FpsCharacter : public CharacterBody3D,
   static constexpr float kMinLandingSpeed = 2.0f;   // m/s
   static constexpr float kMaxLandingSpeed = 12.0f;  // m/s
   static constexpr float kLandingSpring = 16.0f;    // angular frequency, 1/s
-  // A correction of the view eases out at this rate, 1/s; a position more
-  // than kMaxSmoothedCorrection off snaps.
-  static constexpr float kCorrectionRate = 15.0f;
-  static constexpr float kMaxSmoothedCorrection = 1.0f;  // meters
-
   // On ticks, with the body: advance the landing dip's spring.
   // landing_speed is the downward speed of a landing this tick, 0 if none.
   void UpdateLandingDip(float dt, float landing_speed);
   // Every frame, so it is smooth at any refresh rate: advance the bob.
   void UpdateBob(float dt);
-  // Place the (top-level) camera at the body's eye plus correction,
-  // looking along the local look and the recoil (both decayed by
-  // since_tick seconds past the last tick), moved by the bob and
-  // landing_dip.
-  void UpdateCamera(const Vector3& origin,
-                    float landing_dip,
-                    const Vector3& correction,
-                    float since_tick);
+  // Place the (top-level) camera at the drawn body's eye (view_), looking
+  // along the local look and the drawn recoil, moved by the bob and the
+  // drawn landing dip.
+  void UpdateCamera();
   void OnWeaponFired();
   // Show the body and let it collide (and be shot), or not (dead).
   void SetBodyActive(bool active);
@@ -211,11 +200,9 @@ class FpsCharacter : public CharacterBody3D,
   PlayerInput prev_input_;
   // The eye's position relative to the body, from the scene's camera.
   Vector3 eye_offset_ = Vector3(0.0f, kEyeHeight, 0.0f);
-  // The landing dip's spring, and its offset before the last tick (for
-  // drawing between ticks).
+  // The landing dip's spring.
   float landing_offset_ = 0.0f;
   float landing_velocity_ = 0.0f;
-  float prev_landing_offset_ = 0.0f;
 
   // Local state (the player at this machine), not part of the simulation.
   // The look as input arrives: the camera shows it every frame, and the
@@ -225,21 +212,8 @@ class FpsCharacter : public CharacterBody3D,
   bool fire_held_ = false;
   float step_phase_ = 0.0f;
   float bob_amount_ = 0.0f;
-  // How far off the view is drawn after corrections (OnCorrected), from
-  // the predicted state minus the corrected one.
-  struct ViewCorrection {
-    Vector3 position;
-    float recoil = 0.0f;
-    float recoil_yaw = 0.0f;
-    float landing_offset = 0.0f;
-  };
-  // At the last tick, and added since. The position is drawn between the
-  // last two ticks, like the body (the tick before's is
-  // prev_correction_position_); the others decay from the last tick, like
-  // the recoil.
-  ViewCorrection correction_;
-  ViewCorrection new_correction_;
-  Vector3 prev_correction_position_;
+  // What the camera draws this frame (Draw).
+  PlayerState view_;
   // Look rotation applied since the last frame, in radians.
   Vector2 look_delta_;
   Vector2 look_velocity_;

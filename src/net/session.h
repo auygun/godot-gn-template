@@ -21,6 +21,7 @@
 #include "src/net/schema.h"
 #include "src/net/snapshot_interpolator.h"
 #include "src/net/types.h"
+#include "src/net/view_smoother.h"
 
 namespace godot::net {
 
@@ -86,6 +87,7 @@ class NetSession : public Node {
   void _ready() override;
   void _exit_tree() override;
   void _physics_process(double delta) override;
+  void _process(double delta) override;
 
   Schema& schema() { return schema_; }
   void set_delegate(SessionDelegate* delegate) { delegate_ = delegate; }
@@ -230,6 +232,11 @@ class NetSession : public Node {
   void SendInput();
   void SendRpc(PeerId peer, const Box& payload);
   void ReconcileOwned(const Snapshot& snapshot, float dt);
+  // After a tick: the state of the entity this machine commands, for the
+  // smoother, which draws it (Entity::DrawBox).
+  void TickView(EntityId id, float dt);
+  // The smoother draws the entity from now on.
+  void SetDrawnEntity(EntityId id);
   void ApplyRemote(const Snapshot& snapshot);
   // On a client: an entity of the snapshot it doesn't have yet.
   Entity* SpawnFromSnapshot(const SnapshotEntity& entry);
@@ -291,6 +298,10 @@ class NetSession : public Node {
   EntityId own_entity_ = 0;
   ClientPrediction prediction_;
   SnapshotInterpolator interpolator_;
+
+  // The entity this machine commands (0: none), drawn every frame.
+  EntityId drawn_entity_ = 0;
+  ViewSmoother smoother_;
 
   // Simulated network conditions.
   int lag_ms_ = 0;

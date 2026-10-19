@@ -38,8 +38,10 @@ NetSession::NetSession() = default;
 NetSession::~NetSession() = default;
 
 void NetSession::_ready() {
-  // Before every other node's: they see this tick's result.
+  // Before every other node's: they see this tick's result, and this
+  // frame's view.
   set_physics_process_priority(-1);
+  set_process_priority(-1);
 }
 
 bool NetSession::Start() {
@@ -343,6 +345,9 @@ void NetSession::Remove(EntityId id) {
   if (id == own_entity_) {
     own_entity_ = 0;
   }
+  if (id == drawn_entity_) {
+    SetDrawnEntity(0);
+  }
   if (record.scene) {
     return;
   }
@@ -393,6 +398,41 @@ void NetSession::_physics_process(double delta) {
   PrintNetStats(dt);
 }
 
+void NetSession::_process(double delta) {
+  auto it = entities_.find(drawn_entity_);
+  if (it == entities_.end() || !smoother_.has_state()) {
+    return;
+  }
+  Box view;
+  smoother_.View(
+      static_cast<float>(
+          Engine::get_singleton()->get_physics_interpolation_fraction()),
+      &view);
+  it->second.entity->DrawBox(view);
+}
+
+void NetSession::TickView(EntityId id, float dt) {
+  SetDrawnEntity(id);
+  auto it = entities_.find(id);
+  if (it == entities_.end()) {
+    return;
+  }
+  Entity* entity = it->second.entity;
+  Box state;
+  entity->CaptureBox(&state);
+  smoother_.Tick(state, dt);
+  Box view;
+  smoother_.Latest(&view);
+  entity->DrawBox(view);
+}
+
+void NetSession::SetDrawnEntity(EntityId id) {
+  if (id != drawn_entity_) {
+    drawn_entity_ = id;
+    smoother_.Reset();
+  }
+}
+
 void NetSession::ServerTick(float dt) {
   tick_++;
   delegate_->BeforeServerTick(dt);
@@ -403,6 +443,7 @@ void NetSession::ServerTick(float dt) {
       owned.push_back(id);
     }
   }
+  EntityId local = 0;
   for (EntityId id : owned) {
     auto it = entities_.find(id);
     if (it == entities_.end()) {
@@ -410,6 +451,7 @@ void NetSession::ServerTick(float dt) {
     }
     const EntityRecord& record = it->second;
     if (record.owner == local_peer_) {
+      local = id;
       // The server's own player sees the bodies as they are (as of the
       // last tick).
       Box command;
@@ -424,6 +466,7 @@ void NetSession::ServerTick(float dt) {
         {dt, SimulationMode::kAuthoritative, command.view_tick});
   }
   delegate_->AfterServerTick(tick_);
+  TickView(local, dt);
   if (mode_ != Mode::kOffline && tick_ % kSnapshotInterval == 0) {
     SendSnapshots();
   }
@@ -571,11 +614,11 @@ void NetSession::ClientTick(float dt) {
   command.view_tick = interpolator_.render_tick();
   // As the server will decode it, so both simulate the same.
   QuantizeCommand(&command);
-  if (prediction_.SkipThisTick()) {
-    return;
+  if (!prediction_.SkipThisTick()) {
+    prediction_.Predict(own, command, dt);
+    SendInput();
   }
-  prediction_.Predict(own, command, dt);
-  SendInput();
+  TickView(own_entity_, dt);
 }
 
 Entity* NetSession::SpawnFromSnapshot(const SnapshotEntity& entry) {
@@ -628,8 +671,9 @@ void NetSession::ReconcileOwned(const Snapshot& snapshot, float dt) {
     }
   }
   own_entity_ = own->id;
+  SetDrawnEntity(own_entity_);
   prediction_.Reconcile(entity, snapshot.ack, snapshot.input_buffer, own->state,
-                        dt);
+                        dt, &smoother_);
 }
 
 void NetSession::ApplyRemote(const Snapshot& snapshot) {

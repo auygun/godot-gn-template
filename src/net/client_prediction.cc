@@ -3,6 +3,7 @@
 #include <algorithm>
 
 #include "src/net/entity.h"
+#include "src/net/view_smoother.h"
 
 namespace godot::net {
 
@@ -11,11 +12,11 @@ ClientPrediction::ClientPrediction() = default;
 ClientPrediction::~ClientPrediction() = default;
 
 bool ClientPrediction::SkipThisTick() {
-  if (skipped_ticks_ > 0) {
+  skipped_last_tick_ = skipped_ticks_ > 0;
+  if (skipped_last_tick_) {
     skipped_ticks_--;
-    return true;
   }
-  return false;
+  return skipped_last_tick_;
 }
 
 void ClientPrediction::Predict(Entity* entity,
@@ -54,7 +55,8 @@ void ClientPrediction::Reconcile(Entity* entity,
                                  uint32_t ack,
                                  int input_buffer,
                                  const Box& server_state,
-                                 float dt) {
+                                 float dt,
+                                 ViewSmoother* smoother) {
   AdjustRate(ack, input_buffer);
   const Entry* acked = ack != 0 ? Find(ack) : nullptr;
   // What only the server changes (health, scores) is taken whenever it
@@ -87,10 +89,18 @@ void ClientPrediction::Reconcile(Entity* entity,
   if (sequence_ - ack >= kHistorySize) {
     first = sequence_ - kHistorySize + 1;
   }
+  // The corrected state before the last tick's command, for the view (the
+  // state the last tick started from).
+  Box before_last;
+  bool replayed_last = false;
   for (uint32_t s = first; s != sequence_ + 1; s++) {
     Entry* entry = Find(s);
     if (!entry) {
       continue;
+    }
+    if (s == sequence_) {
+      entity->CaptureBox(&before_last);
+      replayed_last = true;
     }
     entity->SimulateBox(entry->command.command, {dt, SimulationMode::kReplay,
                                                  entry->command.view_tick});
@@ -98,10 +108,18 @@ void ClientPrediction::Reconcile(Entity* entity,
   }
   Box corrected;
   entity->CaptureBox(&corrected);
-  if (SameTeleportFields(predicted, corrected)) {
-    entity->OnCorrectedBox(predicted, corrected);
-  } else {
+  if (!SameTeleportFields(predicted, corrected)) {
+    smoother->Teleported(corrected);
     entity->OnTeleported();
+    return;
+  }
+  if (skipped_last_tick_) {
+    // The last tick simulated nothing: it ended where it started.
+    smoother->Corrected(&corrected, corrected);
+  } else {
+    // Unless the server has simulated the last command too: the tick
+    // before is as predicted.
+    smoother->Corrected(replayed_last ? &before_last : nullptr, corrected);
   }
 }
 

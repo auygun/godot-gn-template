@@ -163,7 +163,6 @@ amount = 32
 lifetime = 1.4
 lifetime_randomness = 0.3
 local_coords = false
-draw_order = 2
 mesh = SubResource("QuadMesh_smoke")
 direction = Vector3(0, 0, -1)
 spread = 25.0

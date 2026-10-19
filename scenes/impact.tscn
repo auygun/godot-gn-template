@@ -88,7 +88,6 @@ one_shot = true
 explosiveness = 1.0
 lifetime_randomness = 0.3
 local_coords = false
-draw_order = 2
 mesh = SubResource("QuadMesh_dust")
 direction = Vector3(0, 1, 0)
 spread = 30.0

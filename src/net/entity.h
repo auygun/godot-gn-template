@@ -75,14 +75,14 @@ class TypedEntity : public Entity {
   virtual Command IdleInput() const { return Command(); }
   virtual void Draw(const State& view) {}
 
-  void CaptureBox(Box* state) const final { *state = Box::Of(CaptureState()); }
+  void CaptureBox(Box* state) const final { state->Set(CaptureState()); }
   void RestoreBox(const Box& state) final { RestoreState(state.As<State>()); }
   void ApplyBox(const Box& state) final { ApplyState(state.As<State>()); }
   void SimulateBox(const Box& command, const SimContext& context) final {
     Simulate(command.As<Command>(), context);
   }
-  void GatherBox(Box* command) final { *command = Box::Of(GatherInput()); }
-  void IdleBox(Box* command) const final { *command = Box::Of(IdleInput()); }
+  void GatherBox(Box* command) final { command->Set(GatherInput()); }
+  void IdleBox(Box* command) const final { command->Set(IdleInput()); }
   void DrawBox(const Box& view) final { Draw(view.As<State>()); }
 };
 

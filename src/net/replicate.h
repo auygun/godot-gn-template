@@ -369,13 +369,19 @@ class Box {
 
   template <class T>
   static Box Of(const T& value) {
-    Box box(LayoutOf<T>());
-    std::memcpy(box.data_, &value, sizeof(T));
+    Box box;
+    box.Set(value);
     return box;
   }
 
   // A default value of the layout's type.
   void Reset(const Layout& layout);
+  // Hold value, in place (no temporary box).
+  template <class T>
+  void Set(const T& value) {
+    layout_ = &LayoutOf<T>();
+    std::memcpy(data_, &value, sizeof(T));
+  }
 
   // The value, or null if it is of another type.
   template <class T>

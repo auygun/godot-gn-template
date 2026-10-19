@@ -83,8 +83,8 @@ class Weapon : public Node3D {
   // where a ray (cosmetic, against what this machine sees) hits.
   void PlayShotEffects(const Transform3D& aim);
 
-  int ammo() const { return ammo_; }
-  int reserve_ammo() const { return reserve_ammo_; }
+  int ammo() const { return state_.ammo; }
+  int reserve_ammo() const { return state_.reserve_ammo; }
 
   // Instanced where a shot hits; see Impact.
   void set_impact_scene(const Ref<PackedScene>& scene) {
@@ -97,6 +97,9 @@ class Weapon : public Node3D {
 
  private:
   // Length of the hitscan ray, in meters.
+  // The magazine, and the spare ammo a (re)spawn starts with.
+  static constexpr int kMaxAmmo = 30;
+  static constexpr int kStartReserveAmmo = 300;
   static constexpr float kRange = 100.0f;
   // The barrel aims at the crosshair's hit point, but never closer than
   // this (pressed against a wall it would turn sideways), in meters.
@@ -203,17 +206,12 @@ class Weapon : public Node3D {
   int impact_limit_ = kMaxImpacts;
   int next_impact_ = 0;
 
-  bool reloading_ = false;
-  float reload_timer_ = 0.0f;
-  float fire_cooldown_ = 0.0f;
-  int start_reserve_ammo_ = 0;
+  // The game state, advanced only by Tick (CaptureState copies it).
+  WeaponState state_ = {.ammo = kMaxAmmo, .reserve_ammo = kStartReserveAmmo};
 
   float damage_ = 25.0f;
   float fire_rate_ = 8.0f;  // shots per second
   float reload_time_ = 1.5f;
-  int ammo_ = 30;
-  int max_ammo_ = 30;
-  int reserve_ammo_ = 300;
 };
 
 }  // namespace godot

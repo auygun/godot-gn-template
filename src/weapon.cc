@@ -29,7 +29,6 @@ Weapon::Weapon() = default;
 Weapon::~Weapon() = default;
 
 void Weapon::_ready() {
-  start_reserve_ammo_ = reserve_ammo_;
   flash_ = Object::cast_to<Node3D>(get_node_or_null("Muzzle/Flash"));
   flash_light_ =
       Object::cast_to<OmniLight3D>(get_node_or_null("Muzzle/Flash/Light"));
@@ -102,28 +101,29 @@ void Weapon::Tick(float dt,
                   bool fire,
                   bool reload_pressed,
                   net::SimulationMode mode) {
-  if (reloading_) {
-    reload_timer_ -= dt;
-    if (reload_timer_ <= 0.0f) {
-      reloading_ = false;
-      int needed = max_ammo_ - ammo_;
-      int take = needed < reserve_ammo_ ? needed : reserve_ammo_;
-      ammo_ += take;
-      reserve_ammo_ -= take;
-      emit_signal("ammo_changed", ammo_, reserve_ammo_, reloading_);
+  if (state_.reloading) {
+    state_.reload_timer -= dt;
+    if (state_.reload_timer <= 0.0f) {
+      state_.reloading = false;
+      int needed = kMaxAmmo - state_.ammo;
+      int take = needed < state_.reserve_ammo ? needed : state_.reserve_ammo;
+      state_.ammo += take;
+      state_.reserve_ammo -= take;
+      emit_signal("ammo_changed", state_.ammo, state_.reserve_ammo,
+                  state_.reloading);
     }
   }
 
-  if (fire_cooldown_ > 0.0f) {
-    fire_cooldown_ -= dt;
+  if (state_.fire_cooldown > 0.0f) {
+    state_.fire_cooldown -= dt;
   }
 
   if (reload_pressed) {
     StartReload();
   }
 
-  if (!reloading_ && fire_cooldown_ <= 0.0f && fire) {
-    if (ammo_ > 0) {
+  if (!state_.reloading && state_.fire_cooldown <= 0.0f && fire) {
+    if (state_.ammo > 0) {
       Fire(mode);
     } else {
       StartReload();
@@ -138,12 +138,13 @@ void Weapon::Shoot() {
 void Weapon::Fire(net::SimulationMode mode) {
   // Before "fired": the owner's recoil kick is for the next shot.
   Transform3D aim = ShotTransform();
-  ammo_--;
+  state_.ammo--;
   // Accumulate rather than set: the cooldown overshoots below zero by up
   // to a frame, and resetting that would lower the fire rate.
-  fire_cooldown_ += 1.0f / fire_rate_;
+  state_.fire_cooldown += 1.0f / fire_rate_;
   emit_signal("fired");
-  emit_signal("ammo_changed", ammo_, reserve_ammo_, reloading_);
+  emit_signal("ammo_changed", state_.ammo, state_.reserve_ammo,
+              state_.reloading);
   if (mode == net::SimulationMode::kReplay) {
     return;
   }
@@ -409,48 +410,42 @@ void Weapon::SpawnImpact(Object* collider,
 }
 
 void Weapon::StartReload() {
-  if (reloading_ || ammo_ >= max_ammo_ || reserve_ammo_ <= 0) {
+  if (state_.reloading || state_.ammo >= kMaxAmmo || state_.reserve_ammo <= 0) {
     return;
   }
-  reloading_ = true;
-  reload_timer_ = reload_time_;
-  emit_signal("ammo_changed", ammo_, reserve_ammo_, reloading_);
+  state_.reloading = true;
+  state_.reload_timer = reload_time_;
+  emit_signal("ammo_changed", state_.ammo, state_.reserve_ammo,
+              state_.reloading);
 }
 
 void Weapon::Refill() {
-  reloading_ = false;
-  reload_timer_ = 0.0f;
-  fire_cooldown_ = 0.0f;
+  state_.reloading = false;
+  state_.reload_timer = 0.0f;
+  state_.fire_cooldown = 0.0f;
   kick_back_ = 0.0f;
   kick_pitch_ = 0.0f;
   kick_yaw_ = 0.0f;
   look_sway_ = Vector2();
   move_sway_ = Vector3();
-  ammo_ = max_ammo_;
-  reserve_ammo_ = start_reserve_ammo_;
-  emit_signal("ammo_changed", ammo_, reserve_ammo_, reloading_);
+  state_.ammo = kMaxAmmo;
+  state_.reserve_ammo = kStartReserveAmmo;
+  emit_signal("ammo_changed", state_.ammo, state_.reserve_ammo,
+              state_.reloading);
 }
 
 WeaponState Weapon::CaptureState() const {
-  WeaponState state;
-  state.ammo = ammo_;
-  state.reserve_ammo = reserve_ammo_;
-  state.reloading = reloading_;
-  state.reload_timer = reload_timer_;
-  state.fire_cooldown = fire_cooldown_;
-  return state;
+  return state_;
 }
 
 void Weapon::RestoreState(const WeaponState& state) {
-  bool changed = state.ammo != ammo_ || state.reserve_ammo != reserve_ammo_ ||
-                 state.reloading != reloading_;
-  ammo_ = state.ammo;
-  reserve_ammo_ = state.reserve_ammo;
-  reloading_ = state.reloading;
-  reload_timer_ = state.reload_timer;
-  fire_cooldown_ = state.fire_cooldown;
+  bool changed = state.ammo != state_.ammo ||
+                 state.reserve_ammo != state_.reserve_ammo ||
+                 state.reloading != state_.reloading;
+  state_ = state;
   if (changed) {
-    emit_signal("ammo_changed", ammo_, reserve_ammo_, reloading_);
+    emit_signal("ammo_changed", state_.ammo, state_.reserve_ammo,
+                state_.reloading);
   }
 }
 

@@ -52,8 +52,8 @@ void FpsCharacter::_ready() {
   }
   floor_snap_length_ = get_floor_snap_length();
   spawn_transform_ = get_global_transform();
-  yaw_ = get_rotation().y;
-  look_yaw_ = yaw_;
+  state_.yaw = get_rotation().y;
+  look_yaw_ = state_.yaw;
   // Until the session draws it.
   view_ = CaptureState();
   if (!local_) {
@@ -108,7 +108,7 @@ PlayerInput FpsCharacter::GatherInput() {
       input->get_vector("move_left", "move_right", "move_forward", "move_back");
   command.yaw = look_yaw_;
   command.pitch = look_pitch_;
-  command.respawn_count = respawn_count_;
+  command.respawn_count = state_.respawn_count;
   command.jump = held("jump");
   command.sprint = input->is_action_pressed("sprint");
   command.fire = !fire_held_ && held("shoot");
@@ -118,9 +118,9 @@ PlayerInput FpsCharacter::GatherInput() {
 
 PlayerInput FpsCharacter::IdleInput() const {
   PlayerInput command;
-  command.yaw = yaw_;
-  command.pitch = pitch_;
-  command.respawn_count = respawn_count_;
+  command.yaw = state_.yaw;
+  command.pitch = state_.pitch;
+  command.respawn_count = state_.respawn_count;
   return command;
 }
 
@@ -132,32 +132,32 @@ void FpsCharacter::Simulate(const PlayerInput& command,
   PlayerInput input = command;
   input.move =
       input.move.is_finite() ? input.move.limit_length(1.0f) : Vector2();
-  bool current_look = input.respawn_count == respawn_count_;
+  bool current_look = input.respawn_count == state_.respawn_count;
   if (current_look && std::isfinite(input.yaw)) {
-    yaw_ = std::remainder(input.yaw, static_cast<float>(Math::TAU));
+    state_.yaw = std::remainder(input.yaw, static_cast<float>(Math::TAU));
   }
   if (current_look && std::isfinite(input.pitch)) {
-    pitch_ = static_cast<float>(
+    state_.pitch = static_cast<float>(
         UtilityFunctions::clampf(input.pitch, -kPitchLimit, kPitchLimit));
   }
   view_tick_ = context.view_tick;
   // Even when dead: the camera decays it between ticks too.
   float decay = std::exp(-PlayerState::kRecoilReturn * dt);
-  recoil_ *= decay;
-  recoil_yaw_ *= decay;
-  if (dead_) {
+  state_.recoil *= decay;
+  state_.recoil_yaw *= decay;
+  if (state_.dead) {
     // Lying where it died until the server respawns it; what the player
     // presses meanwhile mustn't count as a press after.
-    prev_input_ = PlayerInput();
+    state_.prev_input = PlayerInput();
     return;
   }
-  bool jump_pressed = input.jump && !prev_input_.jump;
-  bool reload_pressed = input.reload && !prev_input_.reload;
-  prev_input_ = input;
+  bool jump_pressed = input.jump && !state_.prev_input.jump;
+  bool reload_pressed = input.reload && !state_.prev_input.reload;
+  state_.prev_input = input;
 
-  set_rotation(Vector3(0.0f, yaw_, 0.0f));
+  set_rotation(Vector3(0.0f, state_.yaw, 0.0f));
 
-  bool was_on_floor = on_floor_;
+  bool was_on_floor = state_.on_floor;
   Vector3 vel = get_velocity();
 
   if (was_on_floor) {
@@ -188,13 +188,13 @@ void FpsCharacter::Simulate(const PlayerInput& command,
   float fall_speed = -vel.y;
   set_velocity(vel);
   // move_and_slide snaps to the floor if its last call ended on one; going
-  // by on_floor_ instead keeps the result a function of the game state
-  // (the last call may be a later tick, when replaying).
+  // by the state's on_floor instead keeps the result a function of the game
+  // state (the last call may be a later tick, when replaying).
   set_floor_snap_length(was_on_floor ? floor_snap_length_ : 0.0f);
   move_and_slide();
 
-  on_floor_ = is_on_floor();
-  bool landed = !was_on_floor && on_floor_;
+  state_.on_floor = is_on_floor();
+  bool landed = !was_on_floor && state_.on_floor;
   UpdateLandingDip(dt, landed ? fall_speed : 0.0f);
   // The actual velocity: walking into a wall doesn't bob.
   local_velocity_ = get_global_basis().xform_inv(get_real_velocity());
@@ -212,60 +212,34 @@ void FpsCharacter::Simulate(const PlayerInput& command,
 }
 
 Transform3D FpsCharacter::AimTransform() const {
-  float pitch = static_cast<float>(
-      UtilityFunctions::clampf(pitch_ + recoil_, -kPitchLimit, kPitchLimit));
-  Basis yaw(Vector3(0.0f, 1.0f, 0.0f), yaw_);
+  float pitch = static_cast<float>(UtilityFunctions::clampf(
+      state_.pitch + state_.recoil, -kPitchLimit, kPitchLimit));
+  Basis yaw(Vector3(0.0f, 1.0f, 0.0f), state_.yaw);
   return Transform3D(
-      yaw * Basis::from_euler(Vector3(pitch, recoil_yaw_, 0.0f)),
+      yaw * Basis::from_euler(Vector3(pitch, state_.recoil_yaw, 0.0f)),
       get_global_position() +
-          yaw.xform(eye_offset_ + Vector3(0.0f, landing_offset_, 0.0f)));
+          yaw.xform(eye_offset_ + Vector3(0.0f, state_.landing_offset, 0.0f)));
 }
 
 PlayerState FpsCharacter::CaptureState() const {
-  PlayerState state;
+  PlayerState state = state_;
   state.position = get_global_position();
   state.velocity = get_velocity();
-  state.yaw = yaw_;
-  state.pitch = pitch_;
-  state.recoil = recoil_;
-  state.recoil_yaw = recoil_yaw_;
-  state.landing_offset = landing_offset_;
-  state.landing_velocity = landing_velocity_;
-  state.shot_count = shot_count_;
-  state.respawn_count = respawn_count_;
-  state.on_floor = on_floor_;
-  state.health = static_cast<uint8_t>(health_);
-  state.dead = dead_;
-  state.prev_input = prev_input_;
   if (weapon_) {
     state.weapon = weapon_->CaptureState();
   }
-  state.kills = static_cast<uint16_t>(kills_);
-  state.deaths = static_cast<uint16_t>(deaths_);
   return state;
 }
 
 void FpsCharacter::RestoreState(const PlayerState& state) {
-  yaw_ = state.yaw;
-  pitch_ = state.pitch;
+  bool was_dead = state_.dead;
+  state_ = state;
   set_global_transform(
-      Transform3D(Basis(Vector3(0.0f, 1.0f, 0.0f), yaw_), state.position));
+      Transform3D(Basis(Vector3(0.0f, 1.0f, 0.0f), state.yaw), state.position));
   set_velocity(state.velocity);
-  recoil_ = state.recoil;
-  recoil_yaw_ = state.recoil_yaw;
-  landing_offset_ = state.landing_offset;
-  landing_velocity_ = state.landing_velocity;
-  shot_count_ = state.shot_count;
-  respawn_count_ = state.respawn_count;
-  on_floor_ = state.on_floor;
-  health_ = state.health;
-  if (state.dead != dead_) {
-    dead_ = state.dead;
-    SetBodyActive(!dead_);
+  if (state.dead != was_dead) {
+    SetBodyActive(!state.dead);
   }
-  prev_input_ = state.prev_input;
-  kills_ = state.kills;
-  deaths_ = state.deaths;
   local_velocity_ = get_global_basis().xform_inv(state.velocity);
   if (weapon_) {
     weapon_->RestoreState(state.weapon);
@@ -273,8 +247,8 @@ void FpsCharacter::RestoreState(const PlayerState& state) {
 }
 
 void FpsCharacter::ApplyState(const PlayerState& state) {
-  bool teleported = !has_state_ || state.respawn_count != respawn_count_;
-  bool shot = has_state_ && state.shot_count != shot_count_;
+  bool teleported = !has_state_ || state.respawn_count != state_.respawn_count;
+  bool shot = has_state_ && state.shot_count != state_.shot_count;
   has_state_ = true;
   RestoreState(state);
   if (teleported) {
@@ -289,8 +263,8 @@ void FpsCharacter::ApplyState(const PlayerState& state) {
 
 void FpsCharacter::OnTeleported() {
   reset_physics_interpolation();
-  look_yaw_ = yaw_;
-  look_pitch_ = pitch_;
+  look_yaw_ = state_.yaw;
+  look_pitch_ = state_.pitch;
 }
 
 void FpsCharacter::Draw(const PlayerState& view) {
@@ -310,20 +284,20 @@ void FpsCharacter::_process(double delta) {
 
 void FpsCharacter::UpdateLandingDip(float dt, float landing_speed) {
   if (landing_speed > kMinLandingSpeed) {
-    landing_velocity_ -=
+    state_.landing_velocity -=
         kLandingImpulse * static_cast<float>(UtilityFunctions::minf(
                               landing_speed, kMaxLandingSpeed));
   }
   // A critically damped spring back to rest, solved exactly.
   float w = kLandingSpring;
-  float c = landing_velocity_ + w * landing_offset_;
+  float c = state_.landing_velocity + w * state_.landing_offset;
   float e = std::exp(-w * dt);
-  landing_offset_ = (landing_offset_ + c * dt) * e;
-  landing_velocity_ = (landing_velocity_ - w * c * dt) * e;
+  state_.landing_offset = (state_.landing_offset + c * dt) * e;
+  state_.landing_velocity = (state_.landing_velocity - w * c * dt) * e;
 }
 
 void FpsCharacter::UpdateBob(float dt) {
-  bool grounded = on_floor_;
+  bool grounded = state_.on_floor;
   float speed = Vector2(local_velocity_.x, local_velocity_.z).length();
   float target_bob = grounded ? static_cast<float>(UtilityFunctions::minf(
                                     speed / kWalkSpeed, kMaxBobAmount))
@@ -368,30 +342,30 @@ void FpsCharacter::Respawn() {
 }
 
 void FpsCharacter::RespawnAt(const Transform3D& transform) {
-  respawn_count_++;
-  health_ = kMaxHealth;
-  if (dead_) {
-    dead_ = false;
+  state_.respawn_count++;
+  state_.health = kMaxHealth;
+  if (state_.dead) {
+    state_.dead = false;
     SetBodyActive(true);
   }
   set_global_transform(transform);
   // A teleport: don't draw the body sliding back across the map.
   reset_physics_interpolation();
   set_velocity(Vector3());
-  yaw_ = get_rotation().y;
-  pitch_ = 0.0f;
-  look_yaw_ = yaw_;
+  state_.yaw = get_rotation().y;
+  state_.pitch = 0.0f;
+  look_yaw_ = state_.yaw;
   look_pitch_ = 0.0f;
-  recoil_ = 0.0f;
-  recoil_yaw_ = 0.0f;
-  prev_input_ = PlayerInput();
+  state_.recoil = 0.0f;
+  state_.recoil_yaw = 0.0f;
+  state_.prev_input = PlayerInput();
   bob_amount_ = 0.0f;
-  landing_offset_ = 0.0f;
-  landing_velocity_ = 0.0f;
+  state_.landing_offset = 0.0f;
+  state_.landing_velocity = 0.0f;
   look_delta_ = Vector2();
   look_velocity_ = Vector2();
   local_velocity_ = Vector3();
-  on_floor_ = false;
+  state_.on_floor = false;
   view_ = CaptureState();
   UpdateCamera();
   if (weapon_) {
@@ -411,16 +385,17 @@ void FpsCharacter::ApplyLookDelta(const Vector2& delta, float sensitivity) {
 }
 
 bool FpsCharacter::TakeDamage(int amount) {
-  if (dead_ || amount <= 0) {
+  if (state_.dead || amount <= 0) {
     return false;
   }
-  health_ -= amount;
+  // The state's health is a byte: subtract without wrapping.
+  int health = state_.health - amount;
+  state_.health = static_cast<uint8_t>(health > 0 ? health : 0);
   emit_signal("damaged");
-  if (health_ > 0) {
+  if (health > 0) {
     return false;
   }
-  health_ = 0;
-  dead_ = true;
+  state_.dead = true;
   set_velocity(Vector3());
   SetBodyActive(false);
   return true;
@@ -474,8 +449,8 @@ void FpsCharacter::_bind_methods() {
 }
 
 void FpsCharacter::OnWeaponFired() {
-  recoil_ += kRecoilKick;
-  recoil_yaw_ += kRecoilYawKick * SignedNoise(shot_count_++);
+  state_.recoil += kRecoilKick;
+  state_.recoil_yaw += kRecoilYawKick * SignedNoise(state_.shot_count++);
 }
 
 }  // namespace godot

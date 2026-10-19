@@ -204,9 +204,12 @@ ninja -C out/android/release          # .so + app.apk (no_apk=true for just the 
   a dead player leaves layer 4, a dead target disables its shape. A game
   with per-bone hitboxes would record those.
 - Only `Simulate`'s inputs and the state struct may affect the outcome, or
-  predictions won't match: e.g. floor snapping goes by `on_floor_`, not the
-  body's last `move_and_slide`. Anything new in `Simulate` belongs in
-  `PlayerState` with a `Replicate` entry.
+  predictions won't match: e.g. floor snapping goes by `on_floor`, not the
+  body's last `move_and_slide`. `FpsCharacter` and `Weapon` simulate on
+  their state struct (`state_`), so `CaptureState`/`RestoreState` copy it
+  whole, plus what the engine owns (the body's position and velocity):
+  anything new in `Simulate` is just a field of `PlayerState` (or
+  `WeaponState`) with a `Replicate` entry.
 
 ## The game (`src/main.cc`, `src/fps_character.cc`, ...)
 

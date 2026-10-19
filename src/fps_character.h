@@ -97,18 +97,18 @@ class FpsCharacter : public CharacterBody3D,
   // The first-person camera; null on other players' characters.
   Camera3D* camera() const { return camera_; }
   Weapon* weapon() const { return weapon_; }
-  uint8_t respawn_count() const { return respawn_count_; }
+  uint8_t respawn_count() const { return state_.respawn_count; }
   // The view tick of the command being simulated (net::SimContext).
   double view_tick() const { return view_tick_; }
-  int health() const { return health_; }
+  int health() const { return state_.health; }
   // This match's score, kept by the server (Main) and sent with the state.
-  int kills() const { return kills_; }
-  int deaths() const { return deaths_; }
-  void AddKill() { kills_++; }
-  void AddDeath() { deaths_++; }
-  bool dead() const { return dead_; }
+  int kills() const { return state_.kills; }
+  int deaths() const { return state_.deaths; }
+  void AddKill() { state_.kills++; }
+  void AddDeath() { state_.deaths++; }
+  bool dead() const { return state_.dead; }
   // On the floor after the last tick.
-  bool on_floor() const { return on_floor_; }
+  bool on_floor() const { return state_.on_floor; }
   // Look turn rate (x: yaw, y: pitch), in radians per second.
   Vector2 look_velocity() const { return look_velocity_; }
   // Actual velocity in the character's local space.
@@ -174,35 +174,18 @@ class FpsCharacter : public CharacterBody3D,
   Camera3D* camera_ = nullptr;
   Weapon* weapon_ = nullptr;
   bool local_ = true;
-  // The scene's floor snap length, used when on_floor_.
+  // The scene's floor snap length, used when on the floor.
   float floor_snap_length_ = 0.0f;
   // Whether ApplyState has run: the first state only places the character.
   bool has_state_ = false;
-  // Simulation state, advanced only by Simulate.
-  // The aim from the last command; the body has the yaw.
-  float yaw_ = 0.0f;
-  float pitch_ = 0.0f;
-  float recoil_ = 0.0f;
-  float recoil_yaw_ = 0.0f;
-  // Shots fired, seeding the recoil's sideways kick.
-  uint32_t shot_count_ = 0;
-  // Respawns, wrapping: a client snaps its look when it changes.
-  uint8_t respawn_count_ = 0;
+  // The game state, advanced only by Simulate. Its position and velocity
+  // are the body's (the engine moves it): CaptureState and RestoreState
+  // copy those, and state_ holds everything else. The weapon's state is
+  // the weapon's.
+  PlayerState state_;
   double view_tick_ = 0.0;
-  // On the floor after the last tick's move. Kept here rather than read
-  // from the body, so it can be sent and restored.
-  bool on_floor_ = false;
-  int health_ = kMaxHealth;
-  bool dead_ = false;
-  int kills_ = 0;
-  int deaths_ = 0;
-  // The last command, to find button presses.
-  PlayerInput prev_input_;
   // The eye's position relative to the body, from the scene's camera.
   Vector3 eye_offset_ = Vector3(0.0f, kEyeHeight, 0.0f);
-  // The landing dip's spring.
-  float landing_offset_ = 0.0f;
-  float landing_velocity_ = 0.0f;
 
   // Local state (the player at this machine), not part of the simulation.
   // The look as input arrives: the camera shows it every frame, and the

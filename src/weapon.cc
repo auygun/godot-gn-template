@@ -6,6 +6,7 @@
 #include <godot_cpp/classes/audio_stream_player3d.hpp>
 #include <godot_cpp/classes/camera3d.hpp>
 #include <godot_cpp/classes/cpu_particles3d.hpp>
+#include <godot_cpp/classes/gpu_particles3d.hpp>
 #include <godot_cpp/classes/omni_light3d.hpp>
 #include <godot_cpp/classes/physics_body3d.hpp>
 #include <godot_cpp/classes/physics_direct_space_state3d.hpp>
@@ -33,7 +34,7 @@ void Weapon::_ready() {
   flash_light_ =
       Object::cast_to<OmniLight3D>(get_node_or_null("Muzzle/Flash/Light"));
   sparks_ = Object::cast_to<CPUParticles3D>(get_node_or_null("Muzzle/Sparks"));
-  smoke_ = Object::cast_to<CPUParticles3D>(get_node_or_null("Muzzle/Smoke"));
+  smoke_ = Object::cast_to<GPUParticles3D>(get_node_or_null("Muzzle/Smoke"));
   fire_sound_ = Object::cast_to<AudioStreamPlayer3D>(
       get_node_or_null("Muzzle/FireSound"));
   if (RenderingServer::get_singleton()->get_current_rendering_method() ==

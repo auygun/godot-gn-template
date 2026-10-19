@@ -18,6 +18,7 @@ namespace godot {
 class AudioStreamPlayer3D;
 class Camera3D;
 class CPUParticles3D;
+class GPUParticles3D;
 class OmniLight3D;
 
 // Decides what a shot hits among the shootable bodies (players and
@@ -191,7 +192,7 @@ class Weapon : public Node3D {
   Node3D* flash_ = nullptr;
   OmniLight3D* flash_light_ = nullptr;
   CPUParticles3D* sparks_ = nullptr;
-  CPUParticles3D* smoke_ = nullptr;
+  GPUParticles3D* smoke_ = nullptr;
   float flash_timer_ = 0.0f;
   float smoke_timer_ = 0.0f;
   Vector3 flash_scale_ = Vector3(1.0f, 1.0f, 1.0f);

@@ -4,15 +4,12 @@
 
 #include <godot_cpp/classes/area3d.hpp>
 #include <godot_cpp/classes/audio_stream_player3d.hpp>
-#include <godot_cpp/classes/camera3d.hpp>
 #include <godot_cpp/classes/cpu_particles3d.hpp>
 #include <godot_cpp/classes/gpu_particles3d.hpp>
 #include <godot_cpp/classes/omni_light3d.hpp>
-#include <godot_cpp/classes/physics_body3d.hpp>
 #include <godot_cpp/classes/physics_direct_space_state3d.hpp>
 #include <godot_cpp/classes/physics_ray_query_parameters3d.hpp>
 #include <godot_cpp/classes/rendering_server.hpp>
-#include <godot_cpp/classes/viewport.hpp>
 #include <godot_cpp/classes/world3d.hpp>
 #include <godot_cpp/core/class_db.hpp>
 #include <godot_cpp/core/math_defs.hpp>
@@ -30,6 +27,12 @@ Weapon::Weapon() = default;
 Weapon::~Weapon() = default;
 
 void Weapon::_ready() {
+  owner_ = Object::cast_to<FpsCharacter>(get_parent());
+  if (!owner_) {
+    set_process(false);
+    set_physics_process(false);
+    ERR_FAIL_MSG("A Weapon must be a child of an FpsCharacter.");
+  }
   flash_ = Object::cast_to<Node3D>(get_node_or_null("Muzzle/Flash"));
   flash_light_ =
       Object::cast_to<OmniLight3D>(get_node_or_null("Muzzle/Flash/Light"));
@@ -41,22 +44,13 @@ void Weapon::_ready() {
       "mobile") {
     impact_limit_ = kMaxImpactsMobile;
   }
-
-  // An owner sets the camera from its _ready, which runs after this one.
-  if (!Object::cast_to<FpsCharacter>(get_parent())) {
-    SetCamera(get_viewport()->get_camera_3d());
-  }
 }
 
-void Weapon::SetCamera(Camera3D* camera) {
-  camera_ = camera;
-  if (!camera_) {
-    return;
-  }
-  camera_offset_ =
-      camera_->get_global_transform().affine_inverse() * get_global_transform();
-  // Placed every frame from the camera (see UpdatePose), which isn't
-  // interpolated either.
+void Weapon::SetFirstPerson(const Transform3D& view_offset) {
+  first_person_ = true;
+  view_offset_ = view_offset;
+  // Placed every frame from the owner's view (see UpdatePose), which the
+  // camera shows without interpolation too.
   set_as_top_level(true);
   set_physics_interpolation_mode(PHYSICS_INTERPOLATION_MODE_OFF);
 }
@@ -64,8 +58,6 @@ void Weapon::SetCamera(Camera3D* camera) {
 void Weapon::_process(double delta) {
   float dt = static_cast<float>(delta);
 
-  // The owner's _process (which runs first) has already placed the camera
-  // this frame.
   UpdatePose(dt);
 
   // Stopping emission lets the puffs already in the air finish.
@@ -93,8 +85,6 @@ void Weapon::_process(double delta) {
 }
 
 void Weapon::_physics_process(double delta) {
-  // The owner's _physics_process (which runs first) has already turned the
-  // camera this tick.
   UpdateAimTarget();
 }
 
@@ -137,8 +127,10 @@ void Weapon::Shoot() {
 }
 
 void Weapon::Fire(net::SimulationMode mode) {
+  // Shoot() is bound: a script could call it on a weapon without an owner.
+  ERR_FAIL_NULL(owner_);
   // Before "fired": the owner's recoil kick is for the next shot.
-  Transform3D aim = ShotTransform();
+  Transform3D aim = owner_->GetAimTransform();
   state_.ammo--;
   // Accumulate rather than set: the cooldown overshoots below zero by up
   // to a frame, and resetting that would lower the fire rate.
@@ -186,8 +178,8 @@ void Weapon::PlayShotEffects(const Transform3D& aim) {
 }
 
 void Weapon::PlayFireEffects() {
-  // The kick only shows (and decays) on a weapon that follows a camera.
-  if (camera_) {
+  // The kick only shows (and decays) on a weapon that follows the view.
+  if (first_person_) {
     kick_back_ += kKickBack;
     kick_pitch_ += kKickPitch;
     kick_yaw_ +=
@@ -195,12 +187,6 @@ void Weapon::PlayFireEffects() {
   }
   ShowMuzzleFlash();
   PlayFireSound();
-}
-
-Transform3D Weapon::ShotTransform() const {
-  FpsCharacter* owner_character = Object::cast_to<FpsCharacter>(get_parent());
-  return owner_character ? owner_character->AimTransform()
-                         : get_global_transform();
 }
 
 Object* Weapon::ResolveHit(const Transform3D& aim,
@@ -220,13 +206,12 @@ Object* Weapon::ResolveHit(const Transform3D& aim,
     distance = aim.origin.distance_to(*position);
   }
   if (shot_resolver_) {
-    FpsCharacter* owner_character = Object::cast_to<FpsCharacter>(get_parent());
     Vector3 body_position;
     Vector3 body_normal;
-    Node3D* body = shot_resolver_->ResolveShot(
-        owner_character, owner_character ? owner_character->view_tick() : 0.0,
-        aim.origin, -aim.basis.get_column(2).normalized(), distance,
-        &body_position, &body_normal);
+    Node3D* body =
+        shot_resolver_->ResolveShot(owner_, owner_->view_tick(), aim.origin,
+                                    -aim.basis.get_column(2).normalized(),
+                                    distance, &body_position, &body_normal);
     if (body) {
       collider = body;
       *position = body_position;
@@ -250,10 +235,7 @@ Dictionary Weapon::CastRay(const Transform3D& aim,
   for (int64_t i = 0; i < exclude_bodies.size(); i++) {
     exclude.push_back(exclude_bodies[i]);
   }
-  PhysicsBody3D* owner_body = Object::cast_to<PhysicsBody3D>(get_parent());
-  if (owner_body) {
-    exclude.push_back(owner_body->get_rid());
-  }
+  exclude.push_back(owner_->get_rid());
   query->set_exclude(exclude);
 
   Ref<World3D> world_3d = get_world_3d();
@@ -268,11 +250,11 @@ Dictionary Weapon::CastRay(const Transform3D& aim,
 }
 
 void Weapon::UpdateAimTarget() {
-  if (!camera_) {
+  if (!first_person_) {
     return;
   }
   // Cosmetic: the barrel points at what the crosshair (the camera) is on.
-  Transform3D camera_xf = camera_->get_global_transform();
+  Transform3D camera_xf = owner_->GetCameraTransform();
   float hit_distance = kRange;
   Dictionary result = CastRay(camera_xf);
   if (result.has("position")) {
@@ -284,35 +266,28 @@ void Weapon::UpdateAimTarget() {
 }
 
 void Weapon::UpdatePose(float dt) {
-  if (!camera_) {
+  if (!first_person_) {
     return;
   }
-  Transform3D camera_xf = camera_->get_global_transform();
+  Transform3D camera_xf = owner_->GetCameraTransform();
 
-  // Bob and sway, from the owner's motion; none without one.
-  Vector3 bob;
-  float roll = 0.0f;
-  Vector2 look_sway_target;
-  Vector3 move_sway_target;
-  FpsCharacter* owner_character = Object::cast_to<FpsCharacter>(get_parent());
-  if (owner_character) {
-    float phase = owner_character->step_phase();
-    float amount = owner_character->bob_amount();
-    bob = Vector3(kBobSide * std::sin(phase), kBobUp * std::sin(2.0f * phase),
-                  0.0f) *
-              amount +
-          Vector3(0.0f, kLandingDip * owner_character->landing_offset(), 0.0f);
-    roll = kBobRoll * amount * std::sin(phase);
-    look_sway_target = (-kLookSway * owner_character->look_velocity())
-                           .limit_length(kMaxLookSway);
-    move_sway_target = (-kMoveSway * owner_character->local_velocity())
-                           .limit_length(kMaxMoveSway);
-  }
+  // Bob and sway, from the owner's motion.
+  float phase = owner_->step_phase();
+  float amount = owner_->bob_amount();
+  Vector3 bob = Vector3(kBobSide * std::sin(phase),
+                        kBobUp * std::sin(2.0f * phase), 0.0f) *
+                    amount +
+                Vector3(0.0f, kLandingDip * owner_->landing_offset(), 0.0f);
+  float roll = kBobRoll * amount * std::sin(phase);
+  Vector2 look_sway_target =
+      (-kLookSway * owner_->look_velocity()).limit_length(kMaxLookSway);
+  Vector3 move_sway_target =
+      (-kMoveSway * owner_->local_velocity()).limit_length(kMaxMoveSway);
   float sway_blend = 1.0f - std::exp(-kSwayRate * dt);
   look_sway_ += (look_sway_target - look_sway_) * sway_blend;
   move_sway_ += (move_sway_target - move_sway_) * sway_blend;
 
-  Vector3 origin = camera_xf.xform(camera_offset_.origin + bob + move_sway_);
+  Vector3 origin = camera_xf.xform(view_offset_.origin + bob + move_sway_);
 
   // Smoothed, so the barrel doesn't snap when the crosshair crosses an edge.
   aim_distance_ += (aim_target_distance_ - aim_distance_) *

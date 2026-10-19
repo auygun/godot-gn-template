@@ -101,10 +101,15 @@ ninja -C out/android/release          # .so + app.apk (no_apk=true for just the 
   `Simulate(command, context)` advances all game state from that command alone
   (movement, aim, recoil, `Weapon::Tick`). Buttons are held states, and
   presses are detected against the previous command. Shots come from
-  `AimTransform()` (game state), not the camera. Camera and weapon motion
+  `GetAimTransform()` (game state), not the camera. Camera and weapon motion
   (bob, sway, landing dip, look) is local state updated every frame in
-  `_process`, drawn between ticks with physics interpolation, which is
-  enabled in `project.godot`. Keep new gameplay state on the simulation side
+  `_process`. Physics interpolation (enabled in `project.godot`) draws the
+  bodies between ticks, but the camera and the first-person weapon are
+  top-level with it off: `_process` places them every frame from
+  `GetCameraTransform()` (the drawn view plus the latest look and bob), so
+  look input shows without a tick of delay. Code that needs the view at
+  other times (e.g. during a tick) calls `GetCameraTransform()` rather than
+  reading the camera node. Keep new gameplay state on the simulation side
   so a server without devices or a camera could run it.
 
 ## Multiplayer: the netcode framework (`src/net/`)

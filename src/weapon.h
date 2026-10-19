@@ -16,8 +16,8 @@
 namespace godot {
 
 class AudioStreamPlayer3D;
-class Camera3D;
 class CPUParticles3D;
+class FpsCharacter;
 class GPUParticles3D;
 class OmniLight3D;
 
@@ -42,6 +42,8 @@ class ShotResolver {
   virtual ~ShotResolver() = default;
 };
 
+// The weapon of the FpsCharacter it is a child of: fires from its aim,
+// and follows its first-person view if it has one.
 class Weapon : public Node3D {
   GDCLASS(Weapon, Node3D);
 
@@ -70,9 +72,10 @@ class Weapon : public Node3D {
   // Full magazine and reserve, reload cancelled (respawn).
   void Refill();
 
-  // The camera to follow and aim from (the owner's first-person camera);
-  // null leaves the weapon where the scene put it, on the owner's body.
-  void SetCamera(Camera3D* camera);
+  // Follow the owner's first-person view (FpsCharacter::GetCameraTransform),
+  // keeping this transform relative to it. Without it the weapon stays
+  // where the scene put it, on the owner's body.
+  void SetFirstPerson(const Transform3D& view_offset);
   // Where an authoritative shot's hits on players and targets come from;
   // without one, the physics space's ray decides.
   void SetShotResolver(ShotResolver* resolver) { shot_resolver_ = resolver; }
@@ -142,9 +145,6 @@ class Weapon : public Node3D {
   // the floor is one mesh.
   static constexpr int kMaxImpactsMobile = 8;
 
-  // Where shots come from: the owner's aim (game state, the same on a
-  // server), or the weapon's own transform without an owner.
-  Transform3D ShotTransform() const;
   // Ray from aim's origin along its -Z, kRange long, not hitting the
   // owner nor the excluded bodies. Returns intersect_ray's result (empty:
   // no hit).
@@ -159,7 +159,7 @@ class Weapon : public Node3D {
   // Measure how far the crosshair's hit point is (a physics query, so once
   // per tick), for UpdatePose to aim the barrel at.
   void UpdateAimTarget();
-  // Follow the camera (keeping the scene's offset from it) and point the
+  // Follow the owner's view (keeping view_offset_ from it) and point the
   // barrel at what the crosshair is on.
   void UpdatePose(float dt);
   // Fire a shot from the owner's aim. Only an authoritative shot hits;
@@ -175,9 +175,12 @@ class Weapon : public Node3D {
                    const Vector3& position,
                    const Vector3& normal);
 
-  Camera3D* camera_ = nullptr;
-  // The weapon's transform relative to the camera, from the scene.
-  Transform3D camera_offset_;
+  // The parent: shots come from its aim, and the view from its camera.
+  FpsCharacter* owner_ = nullptr;
+  // Whether it follows the owner's first-person view (SetFirstPerson),
+  // keeping this transform relative to it.
+  bool first_person_ = false;
+  Transform3D view_offset_;
   float aim_target_distance_ = kRange;
   float aim_distance_ = kRange;
   float kick_back_ = 0.0f;

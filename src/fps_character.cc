@@ -43,8 +43,12 @@ void FpsCharacter::_ready() {
   weapon_ = Object::cast_to<Weapon>(get_node_or_null("Weapon"));
   if (weapon_) {
     weapon_->connect("fired", callable_mp(this, &FpsCharacter::OnWeaponFired));
-    // The weapon's _ready ran first, before the camera was set up.
-    weapon_->SetCamera(camera_);
+    if (camera_) {
+      // Where the scene puts it relative to the camera (both are children
+      // of the body, until they become top-level).
+      weapon_->SetFirstPerson(camera_->get_transform().affine_inverse() *
+                              weapon_->get_transform());
+    }
   }
   if (camera_) {
     camera_->set_as_top_level(true);
@@ -80,15 +84,6 @@ void FpsCharacter::OnSpawning(net::PeerId owner, bool local) {
       memdelete(child);
     }
   }
-}
-
-void FpsCharacter::_physics_process(double delta) {
-  // The NetSession has already simulated (or, on a client, applied the
-  // server's state for) this tick, and drawn it as of the tick: the
-  // weapon (a child) runs its _physics_process next and aims the barrel
-  // from the camera. _process moves the camera to the drawn position
-  // before rendering.
-  UpdateCamera();
 }
 
 PlayerInput FpsCharacter::GatherInput() {
@@ -211,7 +206,7 @@ void FpsCharacter::Simulate(const PlayerInput& command,
   }
 }
 
-Transform3D FpsCharacter::AimTransform() const {
+Transform3D FpsCharacter::GetAimTransform() const {
   float pitch = static_cast<float>(UtilityFunctions::clampf(
       state_.pitch + state_.recoil, -kPitchLimit, kPitchLimit));
   Basis yaw(Vector3(0.0f, 1.0f, 0.0f), state_.yaw);
@@ -257,7 +252,7 @@ void FpsCharacter::ApplyState(const PlayerState& state) {
   // Sustained fire is at most one shot per tick (8 per second at 60
   // ticks), so one shot's effects cover the change.
   if (shot && weapon_) {
-    weapon_->PlayShotEffects(AimTransform());
+    weapon_->PlayShotEffects(GetAimTransform());
   }
 }
 
@@ -367,7 +362,6 @@ void FpsCharacter::RespawnAt(const Transform3D& transform) {
   local_velocity_ = Vector3();
   state_.on_floor = false;
   view_ = CaptureState();
-  UpdateCamera();
   if (weapon_) {
     weapon_->Refill();
   }
@@ -417,10 +411,7 @@ void FpsCharacter::HoldFire() {
   fire_held_ = true;
 }
 
-void FpsCharacter::UpdateCamera() {
-  if (!camera_) {
-    return;
-  }
+Transform3D FpsCharacter::GetCameraTransform() const {
   // The local look, not the simulated aim: it reacts to input arriving
   // after the last tick.
   float pitch = static_cast<float>(UtilityFunctions::clampf(
@@ -428,11 +419,17 @@ void FpsCharacter::UpdateCamera() {
   // The head is lowest when a foot lands (phase 0 and pi).
   float bob = kBobUp * bob_amount_ * -std::cos(2.0f * step_phase_);
   Basis yaw(Vector3(0.0f, 1.0f, 0.0f), look_yaw_);
-  camera_->set_global_transform(Transform3D(
+  return Transform3D(
       yaw * Basis::from_euler(Vector3(pitch, view_.recoil_yaw, 0.0f)),
       view_.position +
           yaw.xform(eye_offset_ +
-                    Vector3(0.0f, bob + view_.landing_offset, 0.0f))));
+                    Vector3(0.0f, bob + view_.landing_offset, 0.0f)));
+}
+
+void FpsCharacter::UpdateCamera() {
+  if (camera_) {
+    camera_->set_global_transform(GetCameraTransform());
+  }
 }
 
 // static

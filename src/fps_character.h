@@ -28,7 +28,6 @@ class FpsCharacter : public CharacterBody3D,
   ~FpsCharacter() override;
 
   void _ready() override;
-  void _physics_process(double delta) override;
   void _process(double delta) override;
   void _unhandled_input(const Ref<InputEvent>& event) override;
 
@@ -54,7 +53,7 @@ class FpsCharacter : public CharacterBody3D,
   // Where shots come from: the eye, looking along the simulated aim plus
   // recoil. Game state only (no bob or interpolation), so a server without
   // a camera gets the same.
-  Transform3D AimTransform() const;
+  Transform3D GetAimTransform() const;
 
   // The game state, for the server to send and a client to rewind to.
   PlayerState CaptureState() const override;
@@ -94,6 +93,12 @@ class FpsCharacter : public CharacterBody3D,
   float bob_amount() const { return bob_amount_; }
   // The landing dip as drawn this frame, in meters (negative is down).
   float landing_offset() const { return view_.landing_offset; }
+  // The first-person camera's pose as drawn now: the drawn body's eye
+  // (view_), looking along the local look and the drawn recoil, moved by
+  // the bob and the drawn landing dip. Computed on demand, so it is right
+  // at any time, e.g. during a tick, before _process places the camera for
+  // the frame.
+  Transform3D GetCameraTransform() const;
   // The first-person camera; null on other players' characters.
   Camera3D* camera() const { return camera_; }
   Weapon* weapon() const { return weapon_; }
@@ -163,9 +168,7 @@ class FpsCharacter : public CharacterBody3D,
   void UpdateLandingDip(float dt, float landing_speed);
   // Every frame, so it is smooth at any refresh rate: advance the bob.
   void UpdateBob(float dt);
-  // Place the (top-level) camera at the drawn body's eye (view_), looking
-  // along the local look and the drawn recoil, moved by the bob and the
-  // drawn landing dip.
+  // Every frame: place the (top-level) camera at GetCameraTransform().
   void UpdateCamera();
   void OnWeaponFired();
   // Show the body and let it collide (and be shot), or not (dead).

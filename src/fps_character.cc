@@ -151,6 +151,10 @@ void FpsCharacter::Simulate(const PlayerInput& command,
         UtilityFunctions::clampf(input.pitch, -kPitchLimit, kPitchLimit));
   }
   view_tick_ = context.view_tick;
+  // Even when dead: the camera decays it between ticks too.
+  float decay = std::exp(-kRecoilReturn * dt);
+  recoil_ *= decay;
+  recoil_yaw_ *= decay;
   if (dead_) {
     // Lying where it died until the server respawns it; what the player
     // presses meanwhile mustn't count as a press after.
@@ -160,10 +164,6 @@ void FpsCharacter::Simulate(const PlayerInput& command,
   bool jump_pressed = input.jump && !prev_input_.jump;
   bool reload_pressed = input.reload && !prev_input_.reload;
   prev_input_ = input;
-
-  float decay = std::exp(-kRecoilReturn * dt);
-  recoil_ *= decay;
-  recoil_yaw_ *= decay;
 
   set_rotation(Vector3(0.0f, yaw_, 0.0f));
 

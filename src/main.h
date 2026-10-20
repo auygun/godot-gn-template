@@ -1,6 +1,7 @@
 #ifndef SRC_MAIN_H_
 #define SRC_MAIN_H_
 
+#include <deque>
 #include <map>
 #include <vector>
 
@@ -37,8 +38,8 @@ class Main : public Node, public ShotResolver, public net::SessionDelegate {
     player_scene_ = scene;
   }
   Ref<PackedScene> player_scene() const { return player_scene_; }
-  // A physics prop the server drops in a few of (any Node3D scene, without
-  // game code: the session replicates its transform).
+  // A physics prop players drop in front of them (any Node3D scene,
+  // without game code: the session replicates its transform).
   void set_crate_scene(const Ref<PackedScene>& scene) { crate_scene_ = scene; }
   Ref<PackedScene> crate_scene() const { return crate_scene_; }
 
@@ -92,8 +93,12 @@ class Main : public Node, public ShotResolver, public net::SessionDelegate {
   static void OnHitEvent(void* self, net::PeerId from, const net::Box&);
   static void OnDamagedEvent(void* self, net::PeerId from, const net::Box&);
 
-  // Where the server drops the crates, near the first spawn point.
-  static constexpr int kCrateCount = 4;
+  // A requested crate appears this far ahead of the player and this high
+  // above its feet, and falls into place. The oldest goes when there are
+  // more than kMaxCrates.
+  static constexpr float kCrateDistance = 3.0f;  // meters
+  static constexpr float kCrateHeight = 4.0f;    // meters
+  static constexpr size_t kMaxCrates = 32;
 
   // The next spawn point, round robin.
   Transform3D NextSpawnTransform();
@@ -108,6 +113,8 @@ class Main : public Node, public ShotResolver, public net::SessionDelegate {
   void OnWeaponKilled(Object* victim, int64_t peer);
   // A player lost health (bound to its peer id).
   void OnPlayerDamaged(int64_t peer);
+  // A player asked for a crate (bound to its peer id).
+  void OnCrateRequested(int64_t peer);
   // Show the local player's health and score on the HUD.
   void UpdateHud();
   void OnAmmoChanged(int ammo, int reserve, bool reloading);
@@ -116,6 +123,7 @@ class Main : public Node, public ShotResolver, public net::SessionDelegate {
   Ref<PackedScene> crate_scene_;
   net::NetSession* session_ = nullptr;
   net::TypeId player_type_ = 0;
+  net::TypeId crate_type_ = 0;
   Hud* hud_ = nullptr;
   std::vector<Node3D*> spawn_points_;
   size_t next_spawn_ = 0;
@@ -124,6 +132,8 @@ class Main : public Node, public ShotResolver, public net::SessionDelegate {
   std::map<net::PeerId, FpsCharacter*> players_;
   // On the server: seconds until each dead player respawns, by peer id.
   std::map<net::PeerId, float> respawn_timers_;
+  // On the server: the crates players dropped, oldest first.
+  std::deque<Node*> crates_;
   // On the server: the bodies' hitboxes on recent ticks.
   LagCompensation lag_compensation_{Weapon::kShotMask};
 };

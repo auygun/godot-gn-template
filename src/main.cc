@@ -37,9 +37,8 @@ void Main::_ready() {
   player_type_ = schema.AddEntityType<FpsCharacter, PlayerState>(
       player_scene_, NodePath("Players"));
   schema.AddEntityType<Target, TargetState>();
-  net::TypeId crate_type = 0;
   if (crate_scene_.is_valid()) {
-    crate_type = schema.AddNodeType(crate_scene_, NodePath("Props"));
+    crate_type_ = schema.AddNodeType(crate_scene_, NodePath("Props"));
   }
   schema.AddRpc<HitEvent>(&Main::OnHitEvent, this);
   schema.AddRpc<KillEvent>(nullptr, nullptr);
@@ -66,15 +65,6 @@ void Main::_ready() {
   }
   if (session_->has_local_player()) {
     session_->Spawn(player_type_, net::kServerPeerId, NextSpawnTransform());
-  }
-  if (crate_scene_.is_valid() && !spawn_points_.empty()) {
-    // Stacked a little ahead of the first spawn point, falling into place.
-    Transform3D spawn = spawn_points_[0]->get_global_transform();
-    for (int i = 0; i < kCrateCount; i++) {
-      Vector3 offset(-1.5f + (i % 2) * 1.2f, 0.6f + (i / 2) * 1.3f, -4.0f);
-      session_->Spawn(crate_type, net::kNoOwner,
-                      Transform3D(spawn.basis, spawn.xform(offset)));
-    }
   }
 }
 
@@ -104,6 +94,8 @@ void Main::OnSpawned(Node* node,
     }
     player->connect("damaged",
                     callable_mp(this, &Main::OnPlayerDamaged).bind(owner));
+    player->connect("crate_requested",
+                    callable_mp(this, &Main::OnCrateRequested).bind(owner));
   }
   if (local) {
     if (weapon) {
@@ -115,6 +107,11 @@ void Main::OnSpawned(Node* node,
 }
 
 void Main::OnDespawned(Node* node, net::EntityId id) {
+  auto crate = std::find(crates_.begin(), crates_.end(), node);
+  if (crate != crates_.end()) {
+    crates_.erase(crate);
+    return;
+  }
   for (auto it = players_.begin(); it != players_.end(); ++it) {
     if (it->second == node) {
       respawn_timers_.erase(it->first);
@@ -259,6 +256,25 @@ void Main::OnWeaponKilled(Object* victim, int64_t peer) {
 
 void Main::OnPlayerDamaged(int64_t peer) {
   session_->Rpc(static_cast<net::PeerId>(peer), DamagedEvent());
+}
+
+void Main::OnCrateRequested(int64_t peer) {
+  FpsCharacter* player = PlayerOf(static_cast<net::PeerId>(peer));
+  if (!crate_scene_.is_valid() || !player) {
+    return;
+  }
+  if (crates_.size() >= kMaxCrates) {
+    // Despawn takes it out of crates_ (OnDespawned).
+    session_->Despawn(crates_.front());
+  }
+  // The body only turns around Y: ahead along its facing, turned with it.
+  Transform3D body = player->get_global_transform();
+  Vector3 position = body.xform(Vector3(0.0f, kCrateHeight, -kCrateDistance));
+  Node* crate = session_->Spawn(crate_type_, net::kNoOwner,
+                                Transform3D(body.basis, position));
+  if (crate) {
+    crates_.push_back(crate);
+  }
 }
 
 // static

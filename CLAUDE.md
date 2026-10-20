@@ -222,9 +222,12 @@ ninja -C out/android/release          # .so + app.apk (no_apk=true for just the 
   camera and touch controls, and their weapon stays on the body.
 - Physics layer 4 `player`: players don't collide with each other, shots
   hit them.
-- `scenes/crate.tscn` is a plain `RigidBody3D` (no C++): the server drops
-  a few (`Main::crate_scene`, under `Props`) as the example of
-  `AddNodeType`. Players don't push them (`move_and_slide` doesn't).
+- `scenes/crate.tscn` is a plain `RigidBody3D` (no C++), the example of
+  `AddNodeType`: a player's `spawn_crate` press (G) makes `FpsCharacter`
+  emit `crate_requested` on the server, and `Main` drops a crate
+  (`Main::crate_scene`, under `Props`) ahead of and above the player, at
+  most `kMaxCrates` (the oldest goes). Players don't push them
+  (`move_and_slide` doesn't).
 - Deathmatch: a player has 100 health (`PlayerState::health`, `dead`, set
   only by the server: `FpsCharacter::TakeDamage` from `Weapon` hits). A
   dead player's commands do nothing and its body is hidden and off the

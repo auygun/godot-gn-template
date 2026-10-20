@@ -190,6 +190,9 @@ void TouchControls::Layout() {
   buttons_[3] = Button{Vector2(size.width - margin - gap * 1.3f,
                                size.height - margin - gap * 1.4f),
                        80.0f * s, "shoot", "FIRE", true};
+  buttons_[4] =
+      Button{Vector2(size.width - margin, size.height - margin - gap * 2.0f),
+             52.0f * s, "spawn_crate", "CRATE"};
   joy_radius_ = 90.0f * s;
 }
 

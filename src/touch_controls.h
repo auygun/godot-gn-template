@@ -54,7 +54,7 @@ class TouchControls : public Control {
   };
 
   static constexpr int kMaxTouches = 16;
-  static constexpr int kButtonCount = 4;
+  static constexpr int kButtonCount = 5;
   static constexpr float kJoyZoneRatio = 0.45f;  // left part of the screen
   static constexpr float kJoyDeadzone = 0.1f;
   static constexpr float kTouchSensitivity = 0.003f;  // radians per pixel

@@ -95,6 +95,7 @@ struct PlayerState {
     v(prev_input.sprint, Exact(), kOwner);
     v(prev_input.fire, Exact(), kOwner);
     v(prev_input.reload, Exact(), kOwner);
+    v(prev_input.spawn_crate, Exact(), kOwner);
     weapon.Replicate(v);
     v(kills, Exact(), kAll | kServer);
     v(deaths, Exact(), kAll | kServer);

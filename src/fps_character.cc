@@ -108,6 +108,7 @@ PlayerInput FpsCharacter::GatherInput() {
   command.sprint = input->is_action_pressed("sprint");
   command.fire = !fire_held_ && held("shoot");
   command.reload = held("reload");
+  command.spawn_crate = held("spawn_crate");
   return command;
 }
 
@@ -148,6 +149,8 @@ void FpsCharacter::Simulate(const PlayerInput& command,
   }
   bool jump_pressed = input.jump && !state_.prev_input.jump;
   bool reload_pressed = input.reload && !state_.prev_input.reload;
+  bool spawn_crate_pressed =
+      input.spawn_crate && !state_.prev_input.spawn_crate;
   state_.prev_input = input;
 
   set_rotation(Vector3(0.0f, state_.yaw, 0.0f));
@@ -203,6 +206,11 @@ void FpsCharacter::Simulate(const PlayerInput& command,
   // After moving, so shots leave from where the player now is.
   if (weapon_) {
     weapon_->Tick(dt, input.fire, reload_pressed, mode);
+  }
+
+  // The server (Main) spawns it.
+  if (spawn_crate_pressed && mode == net::SimulationMode::kAuthoritative) {
+    emit_signal("crate_requested");
   }
 }
 
@@ -443,6 +451,8 @@ void FpsCharacter::_bind_methods() {
 
   // On the server, when a hit takes health.
   ADD_SIGNAL(MethodInfo("damaged"));
+  // On the server, when the player presses "spawn_crate".
+  ADD_SIGNAL(MethodInfo("crate_requested"));
 }
 
 void FpsCharacter::OnWeaponFired() {

@@ -31,6 +31,7 @@ struct PlayerInput {
   bool sprint = false;
   bool fire = false;
   bool reload = false;
+  bool spawn_crate = false;
 
   template <class V>
   void Replicate(V& v) {
@@ -42,6 +43,7 @@ struct PlayerInput {
     v(sprint, net::Exact());
     v(fire, net::Exact());
     v(reload, net::Exact());
+    v(spawn_crate, net::Exact());
   }
 };
 

@@ -11,6 +11,7 @@ material = SubResource("StandardMaterial3D_1")
 size = Vector3(1, 1, 1)
 
 [node name="Crate" type="RigidBody3D"]
+collision_mask = 17
 mass = 20.0
 
 [node name="CollisionShape3D" type="CollisionShape3D" parent="."]

@@ -221,7 +221,10 @@ ninja -C out/android/release          # .so + app.apk (no_apk=true for just the 
 - Characters that aren't the local player's (`OnSpawning(owner, false)`) drop their
   camera and touch controls, and their weapon stays on the body.
 - Physics layer 4 `player`: players don't collide with each other, shots
-  hit them.
+  hit them. Layer 5 `prop_blocker`: the player's `PropBlocker`, a sphere
+  3 cm above its head that only crates collide with (mask 17), so a crate
+  landing on a player rests there instead of pushing it into the floor
+  (`move_and_slide` resolves the overlap downwards). Off while dead.
 - `scenes/crate.tscn` is a plain `RigidBody3D` (no C++), the example of
   `AddNodeType`: a player's `spawn_crate` press (G) makes `FpsCharacter`
   emit `crate_requested` on the server, and `Main` drops a crate

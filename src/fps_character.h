@@ -133,6 +133,11 @@ class FpsCharacter : public CharacterBody3D,
   static constexpr float kAirAccel = 15.0f;
   static constexpr float kMouseSensitivity = 0.0022f;
   static constexpr float kPitchLimit = 1.55f;  // ~89 degrees
+  // The physics layer of the scene's PropBlocker, a body a little above the
+  // head that only props (crates) collide with: one landing on the player
+  // rests on it rather than on the capsule, which move_and_slide would push
+  // down out of the prop, into the floor.
+  static constexpr uint32_t kPropBlockerLayer = 1u << 4;
   // Below this height the player has fallen off the map and respawns.
   static constexpr float kFallLimit = -20.0f;
   static constexpr int kMaxHealth = 100;

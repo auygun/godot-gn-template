@@ -3,6 +3,7 @@
 #include <cmath>
 
 #include <godot_cpp/classes/camera3d.hpp>
+#include <godot_cpp/classes/collision_object3d.hpp>
 #include <godot_cpp/classes/input.hpp>
 #include <godot_cpp/classes/input_event_mouse_button.hpp>
 #include <godot_cpp/classes/input_event_mouse_motion.hpp>
@@ -406,6 +407,12 @@ bool FpsCharacter::TakeDamage(int amount) {
 void FpsCharacter::SetBodyActive(bool active) {
   // Off the player layer: shots and the living pass through.
   set_collision_layer_value(4, active);
+  // Turn the blocker off too, so crates don't rest on a head nobody can see.
+  CollisionObject3D* prop_blocker =
+      Object::cast_to<CollisionObject3D>(get_node_or_null("PropBlocker"));
+  if (prop_blocker) {
+    prop_blocker->set_collision_layer(active ? kPropBlockerLayer : 0);
+  }
   Node3D* mesh = Object::cast_to<Node3D>(get_node_or_null("Mesh"));
   if (mesh) {
     mesh->set_visible(active);

@@ -1,7 +1,6 @@
 #ifndef SRC_NET_REPLICATE_H_
 #define SRC_NET_REPLICATE_H_
 
-#include <algorithm>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -205,18 +204,6 @@ T Decay(const T& prev, const T& cur, float fraction, float dt) {
 template <float kRate>
 float EaseExp(float age) {
   return std::exp(-kRate * age);
-}
-// Ease: as a critically damped spring of angular frequency kRate (1/s),
-// released at rest: it starts moving smoothly.
-template <float kRate>
-float EaseSpring(float age) {
-  return (1.0f + kRate * age) * std::exp(-kRate * age);
-}
-// Ease: along a smoothstep over kSeconds, gone after them.
-template <float kSeconds>
-float EaseSmoothstep(float age) {
-  float t = std::clamp(age / kSeconds, 0.0f, 1.0f);
-  return 1.0f - t * t * (3.0f - 2.0f * t);
 }
 
 // Which fields an encoding carries, and how.

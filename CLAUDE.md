@@ -142,9 +142,8 @@ ninja -C out/android/release          # .so + app.apk (no_apk=true for just the 
   (`DrawFn`) gives the value between ticks: `Lerp`/`LerpAngle` (between
   the last two, a tick behind) or `Decay<rate>` (on from the last, for a
   field `Simulate` decays, e.g. recoil). `ease` (`EaseFn`, the share of a
-  correction left after some time: `EaseExp<rate>`, `EaseSpring<rate>`,
-  `EaseSmoothstep<seconds>`) eases out mispredictions, and a correction
-  over `snap` shows at once. Function pointers, so a game can pass its own.
+  correction left after some time, e.g. `EaseExp<rate>`) eases out
+  mispredictions, and a correction over `snap` shows at once. Function pointers, so a game can pass its own.
 - `Main::_ready` registers the `Schema`: `SetCommand<PlayerInput>()`,
   entity types and RPCs, in the same order on every side. Clients send the
   schema's hash (layouts and scene paths) on connecting and a mismatch is

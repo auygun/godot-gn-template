@@ -52,7 +52,8 @@ struct PlayerState {
   // nothing until it respawns.
   uint8_t health = 100;
   bool dead = false;
-  // The last command, to find button presses (only the buttons matter).
+  // The last command, to find button presses (only the buttons pressed
+  // rather than held matter).
   PlayerInput prev_input;
   WeaponState weapon;
   // This match's score; only the server changes it.
@@ -92,8 +93,6 @@ struct PlayerState {
     v(health, Exact(), kOwner | kServer);
     v(dead, Exact(), kAll | kServer);
     v(prev_input.jump, Exact(), kOwner);
-    v(prev_input.sprint, Exact(), kOwner);
-    v(prev_input.fire, Exact(), kOwner);
     v(prev_input.reload, Exact(), kOwner);
     v(prev_input.spawn_crate, Exact(), kOwner);
     weapon.Replicate(v);

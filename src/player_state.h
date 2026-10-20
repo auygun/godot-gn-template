@@ -87,10 +87,10 @@ struct PlayerState {
     v(landing_velocity, Exact(), kOwner);
     // Others play a shot's effects when it changes.
     v(shot_count, LowByte(), kAll | kPredicted);
-    v(respawn_count, Exact(), kAll | kPredicted | kTeleport);
+    v(respawn_count, Exact(), kAll | kServer | kTeleport);
     v(on_floor, Exact(), kAll | kPredicted);
     v(health, Exact(), kOwner | kServer);
-    v(dead, Exact(), kAll | kPredicted);
+    v(dead, Exact(), kAll | kServer);
     v(prev_input.jump, Exact(), kOwner);
     v(prev_input.sprint, Exact(), kOwner);
     v(prev_input.fire, Exact(), kOwner);

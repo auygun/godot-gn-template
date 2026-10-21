@@ -60,13 +60,16 @@ enum FieldFlags : uint32_t {
   // differs from the server's, it takes the server's state (like a
   // misprediction, but not counted as one).
   kServer = 1 << 5,
-  // Interpolated between snapshots (float, Vector2, Vector3; angles the
-  // short way round; quaternions slerped). The rest comes from the older
-  // snapshot.
+  // Interpolated between snapshots (float, Vector2, Vector3; kAngular
+  // fields the short way round; quaternions slerped). The rest comes from
+  // the older snapshot.
   kBlend = 1 << 3,
   // When it changes between two snapshots, nothing of the entity is
   // blended (e.g. a respawn count: a teleport mustn't slide).
   kTeleport = 1 << 4,
+  // An angle in radians (a float), whatever its codec: blended, drawn
+  // (Lerp) and corrected the short way round.
+  kAngular = 1 << 6,
 };
 
 enum class FieldType : uint8_t {
@@ -166,36 +169,40 @@ struct LowByte : Codec {
 // field at the tick before (prev) and at the last (cur). It should pass
 // through every tick's value, or the view jumps on ticks: e.g. Lerp, one
 // tick behind, or Decay, ahead along what Simulate does between ticks.
+// flags are the field's, to draw by what it holds (e.g. kAngular).
 // Local only: not part of the Schema's hash.
 template <class T>
-using DrawFn = T (*)(const T& prev, const T& cur, float fraction, float dt);
+using DrawFn = T (*)(const T& prev,
+                     const T& cur,
+                     float fraction,
+                     float dt,
+                     uint32_t flags);
 
 // How a correction of a drawn field eases out: the share of it still drawn
 // age seconds after it, 1 at 0 and falling to 0. Corrections add up, each
 // eased from its own time.
 using EaseFn = float (*)(float age);
 
-// Draw: between the last two ticks (angles the short way round with
-// LerpAngle; quaternions slerped).
+// Draw: between the last two ticks (kAngular fields the short way round;
+// quaternions slerped).
 template <class T>
-T Lerp(const T& prev, const T& cur, float fraction, float dt) {
+T Lerp(const T& prev, const T& cur, float fraction, float dt, uint32_t flags) {
   if constexpr (std::is_same_v<T, Quaternion>) {
     return prev.slerp(cur, fraction);
   } else {
+    if constexpr (std::is_same_v<T, float>) {
+      if (flags & kAngular) {
+        return Math::lerp_angle(prev, cur, fraction);
+      }
+    }
     return prev + (cur - prev) * fraction;
   }
-}
-inline float LerpAngle(const float& prev,
-                       const float& cur,
-                       float fraction,
-                       float dt) {
-  return Math::lerp_angle(prev, cur, fraction);
 }
 // Draw: from the last tick on, decaying at kRate (1/s), for a field that
 // Simulate decays the same way (e.g. a recoil). What else changes it (a
 // kick) shows on the next tick.
 template <float kRate, class T>
-T Decay(const T& prev, const T& cur, float fraction, float dt) {
+T Decay(const T& prev, const T& cur, float fraction, float dt, uint32_t flags) {
   static_assert(!std::is_same_v<T, Quaternion>, "can't decay a quaternion");
   return cur * std::exp(-kRate * fraction * dt);
 }
@@ -302,6 +309,8 @@ class LayoutBuilder {
         std::is_same_v<T, Quaternion>;
     CRASH_COND_MSG((flags & kBlend) && !kBlendable,
                    "kBlend on a field that can't be blended");
+    CRASH_COND_MSG(((flags & kAngular) && !std::is_same_v<T, float>),
+                   "kAngular on a field that isn't a float");
     CRASH_COND_MSG(draw && !kBlendable,
                    "drawing a field that can't be blended");
     // Corrections are differences, added up.

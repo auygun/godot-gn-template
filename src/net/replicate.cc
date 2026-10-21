@@ -474,7 +474,7 @@ void DrawField(const Box& prev,
   auto draw = reinterpret_cast<DrawFn<T>>(field.draw);
   Store(out->data(), field,
         draw(Load<T>(prev.data(), field), Load<T>(cur.data(), field), fraction,
-             dt));
+             dt, field.flags));
 }
 
 // Each eased field, by type.
@@ -656,7 +656,7 @@ void Blend(const Box& from, const Box& to, float t, Box* out) {
     if (!(field.flags & kBlend)) {
       continue;
     }
-    bool angle = field.codec.kind == CodecKind::kAngle;
+    bool angle = field.flags & kAngular;
     switch (field.type) {
       case FieldType::kFloat: {
         float a = Load<float>(from.data(), field);
@@ -743,9 +743,7 @@ void SubtractEased(const Box& a, const Box& b, Box* out) {
         float x = Load<float>(a.data(), field);
         float y = Load<float>(b.data(), field);
         Store(o, field,
-              field.codec.kind == CodecKind::kAngle
-                  ? Math::angle_difference(y, x)
-                  : x - y);
+              (field.flags & kAngular) ? Math::angle_difference(y, x) : x - y);
         break;
       }
       case FieldType::kDouble:

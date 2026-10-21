@@ -132,18 +132,20 @@ ninja -C out/android/release          # .so + app.apk (no_apk=true for just the 
   owner always exact, others through the codec), `kPredicted` (compared by
   reconciliation, within the codec's tolerance), `kServer` (only the server
   changes it: a difference restores the server's state without counting a
-  misprediction), `kBlend` (interpolated; angles the short way),
-  `kTeleport` (a change disables blending and makes a correction a
-  teleport). Encoding, deltas, quantization, comparison, blending and the
+  misprediction), `kBlend` (interpolated), `kTeleport` (a change disables
+  blending and makes a correction a teleport), `kAngular` (an angle in
+  radians, whatever the codec: blended, drawn and corrected the short way
+  round). Encoding, deltas, quantization, comparison, blending and the
   debug round-trip check are all generated from it. Structs must be
   trivially copyable (`<= kMaxStateSize`).
 - How the machine commanding an entity draws a field is declared there too
   (local, not hashed): `v(field, codec, flags, draw, ease, snap)`. `draw`
-  (`DrawFn`) gives the value between ticks: `Lerp`/`LerpAngle` (between
-  the last two, a tick behind) or `Decay<rate>` (on from the last, for a
-  field `Simulate` decays, e.g. recoil). `ease` (`EaseFn`, the share of a
-  correction left after some time, e.g. `EaseExp<rate>`) eases out
-  mispredictions, and a correction over `snap` shows at once. Function pointers, so a game can pass its own.
+  (`DrawFn`) gives the value between ticks: `Lerp` (between the last two,
+  a tick behind; `kAngular` fields the short way) or `Decay<rate>` (on
+  from the last, for a field `Simulate` decays, e.g. recoil). `ease` (`EaseFn`,
+  the share of a correction left after some time, e.g. `EaseExp<rate>`)
+  eases out mispredictions, and a correction over `snap` shows at once.
+  Function pointers, so a game can pass its own.
 - `Main::_ready` registers the `Schema`: `SetCommand<PlayerInput>()`,
   entity types and RPCs, in the same order on every side. Clients send the
   schema's hash (layouts and scene paths) on connecting and a mismatch is

@@ -77,7 +77,7 @@ struct PlayerState {
     v(position, Position(), kAll | kPredicted | kBlend, Lerp,
       EaseExp<kCorrectionRate>, kMaxSmoothedCorrection);
     v(velocity, Exact(1e-2f), kOwner | kPredicted);
-    v(yaw, Angle(), kAll | kPredicted | kBlend);
+    v(yaw, Angle(), kAll | kPredicted | kBlend | kAngular);
     v(pitch, Pitch(), kAll | kPredicted | kBlend);
     v(recoil, Exact(), kOwner | kPredicted, Decay<kRecoilReturn>,
       EaseExp<kCorrectionRate>);

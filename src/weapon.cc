@@ -2,9 +2,11 @@
 
 #include <cmath>
 
+#include <godot_cpp/classes/animation_player.hpp>
 #include <godot_cpp/classes/area3d.hpp>
 #include <godot_cpp/classes/audio_stream_player3d.hpp>
 #include <godot_cpp/classes/cpu_particles3d.hpp>
+#include <godot_cpp/classes/engine.hpp>
 #include <godot_cpp/classes/gpu_particles3d.hpp>
 #include <godot_cpp/classes/omni_light3d.hpp>
 #include <godot_cpp/classes/physics_direct_space_state3d.hpp>
@@ -22,6 +24,15 @@
 
 namespace godot {
 
+namespace {
+
+// The model's nodes: its animations, and the muzzle effects on its gun
+// bone (weapon.tscn).
+constexpr char kAnimationPath[] = "Model/AnimationPlayer";
+constexpr char kMuzzlePath[] = "Model/Rifle/Skeleton3D/GunBone/Muzzle";
+
+}  // namespace
+
 Weapon::Weapon() = default;
 
 Weapon::~Weapon() = default;
@@ -30,35 +41,33 @@ void Weapon::_ready() {
   owner_ = Object::cast_to<FpsCharacter>(get_parent());
   if (!owner_) {
     set_process(false);
-    set_physics_process(false);
     ERR_FAIL_MSG("A Weapon must be a child of an FpsCharacter.");
   }
-  flash_ = Object::cast_to<Node3D>(get_node_or_null("Muzzle/Flash"));
-  flash_light_ =
-      Object::cast_to<OmniLight3D>(get_node_or_null("Muzzle/Flash/Light"));
-  sparks_ = Object::cast_to<CPUParticles3D>(get_node_or_null("Muzzle/Sparks"));
-  smoke_ = Object::cast_to<GPUParticles3D>(get_node_or_null("Muzzle/Smoke"));
-  fire_sound_ = Object::cast_to<AudioStreamPlayer3D>(
-      get_node_or_null("Muzzle/FireSound"));
+  animation_ =
+      Object::cast_to<AnimationPlayer>(get_node_or_null(kAnimationPath));
+  if (animation_) {
+    // At rest until a ViewModel plays it.
+    animation_->stop();
+  }
+  Node* muzzle = get_node_or_null(kMuzzlePath);
+  if (muzzle) {
+    flash_ = Object::cast_to<Node3D>(muzzle->get_node_or_null("Flash"));
+    flash_light_ =
+        Object::cast_to<OmniLight3D>(muzzle->get_node_or_null("Flash/Light"));
+    sparks_ =
+        Object::cast_to<CPUParticles3D>(muzzle->get_node_or_null("Sparks"));
+    smoke_ = Object::cast_to<GPUParticles3D>(muzzle->get_node_or_null("Smoke"));
+    fire_sound_ = Object::cast_to<AudioStreamPlayer3D>(
+        muzzle->get_node_or_null("FireSound"));
+  }
   if (RenderingServer::get_singleton()->get_current_rendering_method() ==
       "mobile") {
     impact_limit_ = kMaxImpactsMobile;
   }
 }
 
-void Weapon::SetFirstPerson(const Transform3D& view_offset) {
-  first_person_ = true;
-  view_offset_ = view_offset;
-  // Placed every frame from the owner's view (see UpdatePose), which the
-  // camera shows without interpolation too.
-  set_as_top_level(true);
-  set_physics_interpolation_mode(PHYSICS_INTERPOLATION_MODE_OFF);
-}
-
 void Weapon::_process(double delta) {
   float dt = static_cast<float>(delta);
-
-  UpdatePose(dt);
 
   // Stopping emission lets the puffs already in the air finish.
   if (smoke_ && smoke_->is_emitting()) {
@@ -82,10 +91,6 @@ void Weapon::_process(double delta) {
   if (flash_light_) {
     flash_light_->set_param(Light3D::PARAM_ENERGY, kFlashLightEnergy * t);
   }
-}
-
-void Weapon::_physics_process(double delta) {
-  UpdateAimTarget();
 }
 
 void Weapon::Tick(float dt,
@@ -178,15 +183,9 @@ void Weapon::PlayShotEffects(const Transform3D& aim) {
 }
 
 void Weapon::PlayFireEffects() {
-  // The kick only shows (and decays) on a weapon that follows the view.
-  if (first_person_) {
-    kick_back_ += kKickBack;
-    kick_pitch_ += kKickPitch;
-    kick_yaw_ +=
-        static_cast<float>(UtilityFunctions::randf_range(-kKickYaw, kKickYaw));
-  }
   ShowMuzzleFlash();
   PlayFireSound();
+  emit_signal("fire_effects_played");
 }
 
 Object* Weapon::ResolveHit(const Transform3D& aim,
@@ -247,67 +246,6 @@ Dictionary Weapon::CastRay(const Transform3D& aim,
     return Dictionary();
   }
   return space_state->intersect_ray(query);
-}
-
-void Weapon::UpdateAimTarget() {
-  if (!first_person_) {
-    return;
-  }
-  // Cosmetic: the barrel points at what the crosshair (the camera) is on.
-  Transform3D camera_xf = owner_->GetCameraTransform();
-  float hit_distance = kRange;
-  Dictionary result = CastRay(camera_xf);
-  if (result.has("position")) {
-    Vector3 position = result.get("position", Variant());
-    hit_distance = camera_xf.origin.distance_to(position);
-  }
-  aim_target_distance_ =
-      static_cast<float>(UtilityFunctions::maxf(hit_distance, kMinAimDistance));
-}
-
-void Weapon::UpdatePose(float dt) {
-  if (!first_person_) {
-    return;
-  }
-  Transform3D camera_xf = owner_->GetCameraTransform();
-
-  // Bob and sway, from the owner's motion.
-  float phase = owner_->step_phase();
-  float amount = owner_->bob_amount();
-  Vector3 bob = Vector3(kBobSide * std::sin(phase),
-                        kBobUp * std::sin(2.0f * phase), 0.0f) *
-                    amount +
-                Vector3(0.0f, kLandingDip * owner_->landing_offset(), 0.0f);
-  float roll = kBobRoll * amount * std::sin(phase);
-  Vector2 look_sway_target =
-      (-kLookSway * owner_->look_velocity()).limit_length(kMaxLookSway);
-  Vector3 move_sway_target =
-      (-kMoveSway * owner_->local_velocity()).limit_length(kMaxMoveSway);
-  float sway_blend = 1.0f - std::exp(-kSwayRate * dt);
-  look_sway_ += (look_sway_target - look_sway_) * sway_blend;
-  move_sway_ += (move_sway_target - move_sway_) * sway_blend;
-
-  Vector3 origin = camera_xf.xform(view_offset_.origin + bob + move_sway_);
-
-  // Smoothed, so the barrel doesn't snap when the crosshair crosses an edge.
-  aim_distance_ += (aim_target_distance_ - aim_distance_) *
-                   (1.0f - std::exp(-kAimDistanceRate * dt));
-
-  Vector3 forward = -camera_xf.basis.get_column(2);
-  Vector3 up = camera_xf.basis.get_column(1);
-  Vector3 aim_point = camera_xf.origin + forward * aim_distance_;
-  Transform3D aim_xf(Basis::looking_at(aim_point - origin, up), origin);
-
-  float decay = std::exp(-kKickReturn * dt);
-  kick_back_ *= decay;
-  kick_pitch_ *= decay;
-  kick_yaw_ *= decay;
-  set_global_transform(
-      aim_xf.translated_local(Vector3(0.0f, 0.0f, kGripOffset))
-          .rotated_local(Vector3(0.0f, 1.0f, 0.0f), kick_yaw_ + look_sway_.x)
-          .rotated_local(Vector3(1.0f, 0.0f, 0.0f), kick_pitch_ + look_sway_.y)
-          .rotated_local(Vector3(0.0f, 0.0f, 1.0f), roll)
-          .translated_local(Vector3(0.0f, 0.0f, kick_back_ - kGripOffset)));
 }
 
 void Weapon::ShowMuzzleFlash() {
@@ -399,15 +337,21 @@ void Weapon::Refill() {
   state_.reloading = false;
   state_.reload_timer = 0.0f;
   state_.fire_cooldown = 0.0f;
-  kick_back_ = 0.0f;
-  kick_pitch_ = 0.0f;
-  kick_yaw_ = 0.0f;
-  look_sway_ = Vector2();
-  move_sway_ = Vector3();
   state_.ammo = kMaxAmmo;
   state_.reserve_ammo = kStartReserveAmmo;
   emit_signal("ammo_changed", state_.ammo, state_.reserve_ammo,
               state_.reloading);
+}
+
+double Weapon::ReloadProgress() const {
+  if (!state_.reloading) {
+    return 0.0;
+  }
+  Engine* engine = Engine::get_singleton();
+  double elapsed = reload_time_ - state_.reload_timer +
+                   engine->get_physics_interpolation_fraction() /
+                       engine->get_physics_ticks_per_second();
+  return UtilityFunctions::clampf(elapsed / reload_time_, 0.0, 1.0);
 }
 
 WeaponState Weapon::CaptureState() const {
@@ -435,6 +379,10 @@ void Weapon::_bind_methods() {
   ClassDB::bind_method(D_METHOD("set_impact_scene", "scene"),
                        &Weapon::set_impact_scene);
   ClassDB::bind_method(D_METHOD("get_impact_scene"), &Weapon::impact_scene);
+  ClassDB::bind_method(D_METHOD("set_view_animations", "prefix"),
+                       &Weapon::set_view_animations);
+  ClassDB::bind_method(D_METHOD("get_view_animations"),
+                       &Weapon::view_animations);
 
   ADD_PROPERTY(PropertyInfo(Variant::INT, "ammo"), "", "get_ammo");
   ADD_PROPERTY(PropertyInfo(Variant::INT, "reserve_ammo"), "",
@@ -442,8 +390,12 @@ void Weapon::_bind_methods() {
   ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "impact_scene",
                             PROPERTY_HINT_RESOURCE_TYPE, "PackedScene"),
                "set_impact_scene", "get_impact_scene");
+  ADD_PROPERTY(PropertyInfo(Variant::STRING, "view_animations"),
+               "set_view_animations", "get_view_animations");
 
   ADD_SIGNAL(MethodInfo("fired"));
+  // When a shot's flash and sound play (on the machines that show it).
+  ADD_SIGNAL(MethodInfo("fire_effects_played"));
   ADD_SIGNAL(MethodInfo("hit", PropertyInfo(Variant::OBJECT, "collider")));
   // A Target or an FpsCharacter.
   ADD_SIGNAL(MethodInfo("killed", PropertyInfo(Variant::OBJECT, "victim")));

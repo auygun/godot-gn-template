@@ -13,6 +13,7 @@
 #include "src/net/session.h"
 #include "src/target.h"
 #include "src/touch_controls.h"
+#include "src/view_model.h"
 #include "src/weapon.h"
 
 void InitializeFpsModule(godot::ModuleInitializationLevel level) {
@@ -27,6 +28,7 @@ void InitializeFpsModule(godot::ModuleInitializationLevel level) {
   GDREGISTER_RUNTIME_CLASS(godot::net::NetSession);
   GDREGISTER_RUNTIME_CLASS(godot::Main);
   GDREGISTER_RUNTIME_CLASS(godot::TouchControls);
+  GDREGISTER_RUNTIME_CLASS(godot::ViewModel);
 }
 
 void UninitializeFpsModule(godot::ModuleInitializationLevel level) {}

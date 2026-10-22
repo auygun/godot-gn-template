@@ -15,6 +15,7 @@
 
 namespace godot {
 
+class AnimationPlayer;
 class AudioStreamPlayer3D;
 class CPUParticles3D;
 class FpsCharacter;
@@ -42,8 +43,9 @@ class ShotResolver {
   virtual ~ShotResolver() = default;
 };
 
-// The weapon of the FpsCharacter it is a child of: fires from its aim,
-// and follows its first-person view if it has one.
+// The weapon of the FpsCharacter it is a child of: fires from its aim.
+// Its model (Model, an instanced glb with an AnimationPlayer) stays where
+// the scene put it, on the owner's body, unless a ViewModel holds it.
 class Weapon : public Node3D {
   GDCLASS(Weapon, Node3D);
 
@@ -58,7 +60,6 @@ class Weapon : public Node3D {
 
   void _ready() override;
   void _process(double delta) override;
-  void _physics_process(double delta) override;
 
   // One physics tick, from the owner's simulation: advance reload and fire
   // timers, then fire (while fire is held) or start reloading (on a reload
@@ -72,10 +73,6 @@ class Weapon : public Node3D {
   // Full magazine and reserve, reload cancelled (respawn).
   void Refill();
 
-  // Follow the owner's first-person view (FpsCharacter::GetCameraTransform),
-  // keeping this transform relative to it. Without it the weapon stays
-  // where the scene put it, on the owner's body.
-  void SetFirstPerson(const Transform3D& view_offset);
   // Where an authoritative shot's hits on players and targets come from;
   // without one, the physics space's ray decides.
   void SetShotResolver(ShotResolver* resolver) { shot_resolver_ = resolver; }
@@ -89,6 +86,16 @@ class Weapon : public Node3D {
 
   int ammo() const { return state_.ammo; }
   int reserve_ammo() const { return state_.reserve_ammo; }
+  bool reloading() const { return state_.reloading; }
+  // How far the reload is, 0 to 1, extrapolated from the last tick.
+  double ReloadProgress() const;
+  // The model's animations (idle, fire, reload, draw; null: none).
+  AnimationPlayer* animation() const { return animation_; }
+
+  // The prefix of the arms' animations holding this weapon (a ViewModel
+  // plays "<prefix>_idle" with this weapon's "idle").
+  void set_view_animations(const String& prefix) { view_animations_ = prefix; }
+  String view_animations() const { return view_animations_; }
 
   // Instanced where a shot hits; see Impact.
   void set_impact_scene(const Ref<PackedScene>& scene) {
@@ -105,34 +112,6 @@ class Weapon : public Node3D {
   static constexpr int kMaxAmmo = 30;
   static constexpr int kStartReserveAmmo = 300;
   static constexpr float kRange = 100.0f;
-  // The barrel aims at the crosshair's hit point, but never closer than
-  // this (pressed against a wall it would turn sideways), in meters.
-  static constexpr float kMinAimDistance = 2.0f;
-  // How fast the aim distance follows the crosshair's hit point, 1/s.
-  static constexpr float kAimDistanceRate = 15.0f;
-  // Each shot kicks the weapon back and its muzzle up (and randomly
-  // sideways), on top of the camera's recoil; decays back exponentially.
-  static constexpr float kKickBack = 0.04f;    // meters per shot
-  static constexpr float kKickPitch = 0.07f;   // radians per shot
-  static constexpr float kKickYaw = 0.015f;    // max radians per shot
-  static constexpr float kKickReturn = 12.0f;  // decay rate, 1/s
-  // The kick rotates around the grip, this far behind the weapon's origin.
-  static constexpr float kGripOffset = 0.2f;  // meters
-  // Walking bobs the weapon in a figure eight on top of the camera's bob,
-  // with a sideways rock; sizes at walk speed.
-  static constexpr float kBobSide = 0.012f;  // meters
-  static constexpr float kBobUp = 0.008f;    // meters
-  static constexpr float kBobRoll = 0.02f;   // radians
-  // The weapon lags behind turning (radians per radian/s of turn rate,
-  // capped) and behind moving (meters per m/s, capped), springing back at
-  // kSwayRate, 1/s.
-  static constexpr float kLookSway = 0.012f;
-  static constexpr float kMaxLookSway = 0.08f;  // radians
-  static constexpr float kMoveSway = 0.004f;
-  static constexpr float kMaxMoveSway = 0.03f;  // meters
-  static constexpr float kSwayRate = 10.0f;
-  // Landing dips the weapon this much more than the camera.
-  static constexpr float kLandingDip = 0.6f;
   // How long the muzzle flash stays up after a shot, in seconds.
   static constexpr float kFlashTime = 0.06f;
   static constexpr float kFlashLightEnergy = 3.0f;
@@ -156,12 +135,6 @@ class Weapon : public Node3D {
   Object* ResolveHit(const Transform3D& aim,
                      Vector3* position,
                      Vector3* normal);
-  // Measure how far the crosshair's hit point is (a physics query, so once
-  // per tick), for UpdatePose to aim the barrel at.
-  void UpdateAimTarget();
-  // Follow the owner's view (keeping view_offset_ from it) and point the
-  // barrel at what the crosshair is on.
-  void UpdatePose(float dt);
   // Fire a shot from the owner's aim. Only an authoritative shot hits;
   // a predicted one plays its effects, a replayed one nothing.
   void Fire(net::SimulationMode mode);
@@ -177,21 +150,12 @@ class Weapon : public Node3D {
 
   // The parent: shots come from its aim, and the view from its camera.
   FpsCharacter* owner_ = nullptr;
-  // Whether it follows the owner's first-person view (SetFirstPerson),
-  // keeping this transform relative to it.
-  bool first_person_ = false;
-  Transform3D view_offset_;
-  float aim_target_distance_ = kRange;
-  float aim_distance_ = kRange;
-  float kick_back_ = 0.0f;
-  float kick_pitch_ = 0.0f;
-  float kick_yaw_ = 0.0f;
-  // Smoothed sway: x yaw, y pitch (radians); position in camera space.
-  Vector2 look_sway_;
-  Vector3 move_sway_;
+  // The model's animations.
+  AnimationPlayer* animation_ = nullptr;
+  String view_animations_;
 
-  // Muzzle effect nodes (Muzzle/Flash, its Light, Muzzle/Sparks,
-  // Muzzle/Smoke).
+  // Muzzle effect nodes (Flash, its Light, Sparks and Smoke under the
+  // Muzzle, which follows the model's gun bone).
   Node3D* flash_ = nullptr;
   OmniLight3D* flash_light_ = nullptr;
   CPUParticles3D* sparks_ = nullptr;
@@ -199,7 +163,7 @@ class Weapon : public Node3D {
   float flash_timer_ = 0.0f;
   float smoke_timer_ = 0.0f;
   Vector3 flash_scale_ = Vector3(1.0f, 1.0f, 1.0f);
-  // Muzzle/FireSound.
+  // The Muzzle's FireSound.
   AudioStreamPlayer3D* fire_sound_ = nullptr;
 
   ShotResolver* shot_resolver_ = nullptr;

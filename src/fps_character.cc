@@ -11,6 +11,7 @@
 #include <godot_cpp/core/math_defs.hpp>
 #include <godot_cpp/variant/utility_functions.hpp>
 
+#include "src/view_model.h"
 #include "src/weapon.h"
 
 namespace godot {
@@ -44,12 +45,10 @@ void FpsCharacter::_ready() {
   weapon_ = Object::cast_to<Weapon>(get_node_or_null("Weapon"));
   if (weapon_) {
     weapon_->connect("fired", callable_mp(this, &FpsCharacter::OnWeaponFired));
-    if (camera_) {
-      // Where the scene puts it relative to the camera (both are children
-      // of the body, until they become top-level).
-      weapon_->SetFirstPerson(camera_->get_transform().affine_inverse() *
-                              weapon_->get_transform());
-    }
+  }
+  view_model_ = Object::cast_to<ViewModel>(get_node_or_null("ViewModel"));
+  if (view_model_) {
+    view_model_->Hold(weapon_);
   }
   if (camera_) {
     camera_->set_as_top_level(true);
@@ -77,8 +76,9 @@ void FpsCharacter::OnSpawning(net::PeerId owner, bool local) {
     return;
   }
   // Freed before entering the tree: the camera is current in the scene,
-  // and would take over the view from the local player's.
-  for (const char* name : {"Camera3D", "TouchControls"}) {
+  // and would take over the view from the local player's; the weapon
+  // stays on the body, without arms.
+  for (const char* name : {"Camera3D", "TouchControls", "ViewModel"}) {
     Node* child = get_node_or_null(name);
     if (child) {
       remove_child(child);
@@ -419,6 +419,9 @@ void FpsCharacter::SetBodyActive(bool active) {
   }
   if (weapon_) {
     weapon_->set_visible(active);
+  }
+  if (view_model_) {
+    view_model_->set_visible(active);
   }
 }
 

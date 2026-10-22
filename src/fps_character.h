@@ -15,6 +15,7 @@
 namespace godot {
 
 class Camera3D;
+class ViewModel;
 class Weapon;
 
 // A player, replicated by the NetSession (src/net/): its owner's commands
@@ -86,7 +87,7 @@ class FpsCharacter : public CharacterBody3D,
   // click that recaptured the mouse).
   void HoldFire();
 
-  // View motion state, for the weapon's bob and sway. The step phase
+  // View motion state, for the view model's bob and sway. The step phase
   // advances one cycle per two steps; the bob amount is 0 when standing or
   // airborne, 1 at walk speed.
   float step_phase() const { return step_phase_; }
@@ -181,6 +182,8 @@ class FpsCharacter : public CharacterBody3D,
 
   Camera3D* camera_ = nullptr;
   Weapon* weapon_ = nullptr;
+  // The first-person arms holding weapon_; null on other players'.
+  ViewModel* view_model_ = nullptr;
   bool local_ = true;
   // The scene's floor snap length, used when on the floor.
   float floor_snap_length_ = 0.0f;

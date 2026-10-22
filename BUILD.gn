@@ -38,6 +38,7 @@ shared_library("extension") {
     "src/register_types.cc",
     "src/target.cc",
     "src/touch_controls.cc",
+    "src/view_model.cc",
     "src/weapon.cc",
   ]
   deps = [
@@ -102,6 +103,10 @@ if (build_apk) {
       "gdextension/extension.gdextension",
       "icon.svg",
       "icon.svg.import",
+      "models/arms.glb",
+      "models/arms.glb.import",
+      "models/rifle.glb",
+      "models/rifle.glb.import",
       "project.godot",
       "scenes/crate.tscn",
       "scenes/hud.tscn",
@@ -110,6 +115,7 @@ if (build_apk) {
       "scenes/main.tscn",
       "scenes/player.tscn",
       "scenes/target.tscn",
+      "scenes/view_model.tscn",
       "scenes/weapon.tscn",
       "sounds/weapon_fire.wav",
       "sounds/weapon_fire.wav.import",

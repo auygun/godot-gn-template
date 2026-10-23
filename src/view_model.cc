@@ -163,6 +163,11 @@ void ViewModel::UpdatePose(float dt) {
   Vector3 aim_point = camera_xf.origin + forward * aim_distance_;
   Transform3D aim_xf(Basis::looking_at(aim_point - origin, up), origin);
 
+  float tucked = weapon_ && weapon_->tucked() ? 1.0f : 0.0f;
+  tuck_ += (tucked - tuck_) * (1.0f - std::exp(-kTuckRate * dt));
+  // Eased, so the swing starts and settles gently.
+  float tuck = tuck_ * tuck_ * (3.0f - 2.0f * tuck_);
+
   float decay = std::exp(-kKickReturn * dt);
   kick_back_ *= decay;
   kick_pitch_ *= decay;
@@ -172,8 +177,11 @@ void ViewModel::UpdatePose(float dt) {
       aim_xf.translated_local(Vector3(0.0f, 0.0f, kGripOffset))
           .rotated_local(Vector3(0.0f, 1.0f, 0.0f), kick_yaw_ + look_sway_.x)
           .rotated_local(Vector3(1.0f, 0.0f, 0.0f), kick_pitch_ + look_sway_.y)
-          .rotated_local(Vector3(0.0f, 0.0f, 1.0f), roll)
-          .translated_local(Vector3(0.0f, 0.0f, kick_back_ - kGripOffset));
+          .rotated_local(Vector3(0.0f, 1.0f, 0.0f), kTuckYaw * tuck)
+          .rotated_local(Vector3(1.0f, 0.0f, 0.0f), kTuckPitch * tuck)
+          .rotated_local(Vector3(0.0f, 0.0f, 1.0f), roll + kTuckRoll * tuck)
+          .translated_local(
+              Vector3(0.0f, 0.0f, kick_back_ + kTuckBack * tuck - kGripOffset));
   set_global_transform(weapon_xf.translated_local(-grip));
 }
 

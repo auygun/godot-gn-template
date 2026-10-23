@@ -18,6 +18,9 @@ struct WeaponState {
   bool reloading = false;
   float reload_timer = 0.0f;
   float fire_cooldown = 0.0f;
+  // A wall is closer than the barrel reaches: the weapon is tucked in and
+  // can't fire.
+  bool tucked = false;
 
   // The owner's only: others see the shots (PlayerState::shot_count).
   template <class V>
@@ -27,6 +30,7 @@ struct WeaponState {
     v(reloading, net::Exact(), net::kOwner | net::kPredicted);
     v(reload_timer, net::Exact(), net::kOwner);
     v(fire_cooldown, net::Exact(), net::kOwner);
+    v(tucked, net::Exact(), net::kOwner | net::kPredicted);
   }
 };
 

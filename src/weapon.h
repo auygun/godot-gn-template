@@ -62,7 +62,8 @@ class Weapon : public Node3D {
   void _process(double delta) override;
 
   // One physics tick, from the owner's simulation: advance reload and fire
-  // timers, then fire (while fire is held) or start reloading (on a reload
+  // timers, check for a wall in the barrel's way, then fire (while fire is
+  // held and the weapon isn't tucked) or start reloading (on a reload
   // press).
   void Tick(float dt,
             bool fire,
@@ -87,6 +88,7 @@ class Weapon : public Node3D {
   int ammo() const { return state_.ammo; }
   int reserve_ammo() const { return state_.reserve_ammo; }
   bool reloading() const { return state_.reloading; }
+  bool tucked() const { return state_.tucked; }
   // How far the reload is, 0 to 1, extrapolated from the last tick.
   double ReloadProgress() const;
   // The model's animations (idle, fire, reload, draw; null: none).
@@ -112,6 +114,16 @@ class Weapon : public Node3D {
   static constexpr int kMaxAmmo = 30;
   static constexpr int kStartReserveAmmo = 300;
   static constexpr float kRange = 100.0f;
+  // The weapon tucks in when a wall is closer than the barrel reaches
+  // (meters ahead of the aim, along the barrel's line kBarrelOffset from
+  // it), and comes back out once it is kTuckRelease away (a little
+  // farther, so standing at the edge doesn't flicker).
+  static constexpr float kTuckDistance = 0.95f;
+  static constexpr float kTuckRelease = 1.0f;
+  static constexpr Vector3 kBarrelOffset = Vector3(0.17f, -0.2f, 0.0f);
+  // What tucks it: the level, not the players (who move, and are drawn in
+  // the past on clients, so predictions would miss).
+  static constexpr uint32_t kTuckMask = kShotMask & ~(1u << 3);
   // How long the muzzle flash stays up after a shot, in seconds.
   static constexpr float kFlashTime = 0.06f;
   static constexpr float kFlashLightEnergy = 3.0f;
@@ -129,6 +141,8 @@ class Weapon : public Node3D {
   // no hit).
   Dictionary CastRay(const Transform3D& aim,
                      const TypedArray<RID>& exclude = TypedArray<RID>());
+  // Whether a wall is in the barrel's way (with hysteresis).
+  bool CheckTucked();
   // An authoritative shot's hit: the nearest of the level (the physics
   // ray) and, with a ShotResolver, its bodies. Sets the collider (null: a
   // miss), position and normal.

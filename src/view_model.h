@@ -13,7 +13,8 @@ class Weapon;
 
 // The first-person arms of the FpsCharacter it is a child of, holding its
 // weapon. Placed every frame from the owner's view (with bob, sway, the
-// shots' kick, and the weapon aimed at what the crosshair is on); the
+// shots' kick, the weapon aimed at what the crosshair is on, and tucked
+// in against the body while a wall is in its way); the
 // weapon follows the arms' "weapon" bone. The arms play the held weapon's
 // animations (its view_animations prefix: "rifle_idle", ...) in step with
 // the weapon's own ("idle", ...): a reload from the weapon's state, a
@@ -45,6 +46,14 @@ class ViewModel : public Node3D {
   static constexpr float kMaxAimDistance = 100.0f;
   // How fast the aim distance follows the crosshair's hit point, 1/s.
   static constexpr float kAimDistanceRate = 15.0f;
+  // The weapon swings in across the body while it is tucked
+  // (Weapon::tucked), at kTuckRate, 1/s. Fully tucked, around the grip:
+  // the muzzle turned in and up, canted in, and pulled back.
+  static constexpr float kTuckRate = 12.0f;
+  static constexpr float kTuckYaw = 1.1f;     // radians
+  static constexpr float kTuckPitch = 0.45f;  // radians
+  static constexpr float kTuckRoll = 0.4f;    // radians
+  static constexpr float kTuckBack = 0.08f;   // meters
   // Each shot kicks the arms back and the muzzle up (and randomly
   // sideways), on top of the camera's recoil; decays back exponentially.
   static constexpr float kKickBack = 0.04f;    // meters per shot
@@ -109,6 +118,8 @@ class ViewModel : public Node3D {
 
   float aim_target_distance_ = kMaxAimDistance;
   float aim_distance_ = kMaxAimDistance;
+  // How far the weapon has swung in (0 to 1).
+  float tuck_ = 0.0f;
   float kick_back_ = 0.0f;
   float kick_pitch_ = 0.0f;
   float kick_yaw_ = 0.0f;

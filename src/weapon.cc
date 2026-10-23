@@ -118,7 +118,9 @@ void Weapon::Tick(float dt,
     StartReload();
   }
 
-  if (!state_.reloading && state_.fire_cooldown <= 0.0f && fire) {
+  state_.tucked = CheckTucked();
+  if (!state_.reloading && !state_.tucked && state_.fire_cooldown <= 0.0f &&
+      fire) {
     if (state_.ammo > 0) {
       Fire(mode);
     } else {
@@ -248,6 +250,35 @@ Dictionary Weapon::CastRay(const Transform3D& aim,
   return space_state->intersect_ray(query);
 }
 
+bool Weapon::CheckTucked() {
+  if (!owner_) {
+    return false;
+  }
+  Ref<World3D> world_3d = get_world_3d();
+  PhysicsDirectSpaceState3D* space_state =
+      world_3d.is_valid() ? world_3d->get_direct_space_state() : nullptr;
+  if (!space_state) {
+    return false;
+  }
+  // From the aim (game state), so the server and the predicting client
+  // agree.
+  Transform3D aim = owner_->GetAimTransform();
+  Vector3 from = aim.xform(kBarrelOffset);
+  Vector3 to = aim.xform(kBarrelOffset + Vector3(0.0f, 0.0f, -kTuckRelease));
+  Ref<PhysicsRayQueryParameters3D> query =
+      PhysicsRayQueryParameters3D::create(from, to, kTuckMask);
+  TypedArray<RID> exclude;
+  exclude.push_back(owner_->get_rid());
+  query->set_exclude(exclude);
+  Dictionary result = space_state->intersect_ray(query);
+  if (!result.has("position")) {
+    return false;
+  }
+  Vector3 position = result.get("position", Variant());
+  return from.distance_to(position) <
+         (state_.tucked ? kTuckRelease : kTuckDistance);
+}
+
 void Weapon::ShowMuzzleFlash() {
   if (flash_) {
     // A random roll and size so consecutive shots don't look identical.
@@ -337,6 +368,7 @@ void Weapon::Refill() {
   state_.reloading = false;
   state_.reload_timer = 0.0f;
   state_.fire_cooldown = 0.0f;
+  state_.tucked = false;
   state_.ammo = kMaxAmmo;
   state_.reserve_ammo = kStartReserveAmmo;
   emit_signal("ammo_changed", state_.ammo, state_.reserve_ammo,

@@ -79,7 +79,8 @@ class ViewModel : public Node3D {
   // Follow the owner's view, and point the weapon at what the crosshair
   // is on.
   void UpdatePose(float dt);
-  // Advance the animations; a reload follows the weapon's state.
+  // Pose both animations at the same progress: a reload's from the
+  // weapon's state, the others' from the time played.
   void UpdateAnimation(float dt);
   // Play name (the weapon's own; the arms' with its prefix) from its start.
   void Play(const StringName& name);
@@ -100,8 +101,11 @@ class ViewModel : public Node3D {
   // The weapon's animations and their prefix on the arms.
   AnimationPlayer* weapon_animation_ = nullptr;
   String prefix_;
-  // The playing animation (the weapon's name for it).
+  // The playing animation (the weapon's name for it), how far it is (0 to
+  // 1), and how long it lasts: the arms' clip, or the weapon's without one.
   StringName playing_;
+  double progress_ = 0.0;
+  double duration_ = 0.0;
 
   float aim_target_distance_ = kMaxAimDistance;
   float aim_distance_ = kMaxAimDistance;

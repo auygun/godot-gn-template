@@ -1,5 +1,6 @@
 #include "src/view_model.h"
 
+#include <algorithm>
 #include <cmath>
 
 #include <godot_cpp/classes/animation_player.hpp>
@@ -45,7 +46,7 @@ void ViewModel::_ready() {
   }
   weapon_bone_ = skeleton_->find_bone(kWeaponBone);
   ERR_FAIL_COND_MSG(weapon_bone_ < 0, "The arms have no weapon bone.");
-  // Advanced by UpdateAnimation, in step with the weapon's.
+  // Posed by UpdateAnimation, in step with the weapon's.
   animation_->set_callback_mode_process(
       AnimationMixer::ANIMATION_CALLBACK_MODE_PROCESS_MANUAL);
   // Placed every frame from the owner's view, which the camera shows
@@ -183,36 +184,41 @@ void ViewModel::UpdateAnimation(float dt) {
     if (playing_ != StringName("reload")) {
       Play("reload");
     }
-    double progress = weapon_->ReloadProgress();
-    for (AnimationPlayer* player : {animation_, weapon_animation_}) {
-      if (player && player->is_playing()) {
-        player->seek(progress * player->get_current_animation_length(), true);
-      }
+    progress_ = weapon_->ReloadProgress();
+  } else {
+    // Every animation starts and ends in idle's first pose, so idle repeats
+    // (and the others return to it) by starting it again.
+    if (playing_ == StringName("reload") || progress_ >= 1.0) {
+      Play("idle");
     }
-    return;
+    progress_ =
+        duration_ > 0.0 ? std::min(progress_ + dt / duration_, 1.0) : 1.0;
   }
-  // Every animation starts and ends in idle's first pose, so idle repeats
-  // (and the others return to it) by starting it again.
-  if (!animation_->is_playing() || playing_ == StringName("reload")) {
-    Play("idle");
-  }
+  // Each clip at the same share of its own length, so clips of different
+  // lengths start and end together.
   for (AnimationPlayer* player : {animation_, weapon_animation_}) {
     if (player && player->is_playing()) {
-      player->advance(dt);
+      player->seek(progress_ * player->get_current_animation_length(), true);
     }
   }
 }
 
 void ViewModel::Play(const StringName& name) {
   playing_ = name;
+  progress_ = 0.0;
+  duration_ = 0.0;
   StringName arms_name = prefix_ + String(name);
   if (animation_ && animation_->has_animation(arms_name)) {
     animation_->play(arms_name);
     animation_->seek(0.0, true);
+    duration_ = animation_->get_current_animation_length();
   }
   if (weapon_animation_ && weapon_animation_->has_animation(name)) {
     weapon_animation_->play(name);
     weapon_animation_->seek(0.0, true);
+    if (duration_ == 0.0) {
+      duration_ = weapon_animation_->get_current_animation_length();
+    }
   }
 }
 
